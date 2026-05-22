@@ -1,0 +1,62 @@
+# ── Core Framework ────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+pydantic==2.7.4
+pydantic-settings==2.3.4
+typing-extensions==4.12.2
+
+# ── LangChain + LangGraph — all pinned to compatible versions ─────────────────
+langchain==0.2.16
+langchain-core==0.2.40
+langchain-google-genai==1.0.10
+langgraph==0.2.4
+
+# ── Google Generative AI ──────────────────────────────────────────────────────
+google-generativeai==0.7.2
+
+# ── Data Processing ───────────────────────────────────────────────────────────
+pandas>=2.2.2
+numpy>=1.26.0,<2.0.0
+openpyxl==3.1.4
+
+# ── PDF ───────────────────────────────────────────────────────────────────────
+pypdf==4.3.1
+pdfplumber==0.11.4
+pdf2image==1.17.0
+
+# ── OCR ───────────────────────────────────────────────────────────────────────
+easyocr==1.7.2
+img2table==1.2.9
+# FIX: opencv-python-headless compatible with numpy 2.x
+opencv-python-headless==4.9.0.80
+Pillow==10.4.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.36
+asyncpg==0.29.0
+psycopg2-binary==2.9.10
+alembic==1.13.3
+aiosqlite==0.20.0
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis==5.1.1
+arq==0.26.1
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ── Rate Limiting ─────────────────────────────────────────────────────────────
+slowapi==0.1.9
+limits==3.13.0
+
+# ── Utils ─────────────────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+httpx==0.27.2
+aiofiles==24.1.0
+tenacity>=8.1.0,<9.0.0,!=8.4.0
+structlog==24.4.0
+sentry-sdk[fastapi]==2.14.0
+prometheus-fastapi-instrumentator==7.0.0
+prometheus-client==0.21.0
