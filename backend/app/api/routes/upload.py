@@ -9,19 +9,28 @@ from app.parsers.csv_parser import detect_file_type
 
 router = APIRouter()
 
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".txt"}
+ALLOWED_EXTENSIONS = {
+    ".csv", ".xlsx", ".xls", ".xlsm",
+    ".pdf",
+    ".png", ".jpg", ".jpeg", ".tiff", ".webp",
+    ".docx", ".doc",
+    ".txt",
+}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 @router.post("/", response_model=UploadResponse)
 async def upload_file(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(400, "No filename provided")
+
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported file type: {ext}")
+        raise HTTPException(400, f"Unsupported file type: {ext}. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}")
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(413, "File too large (max 50MB)")
+        raise HTTPException(413, f"File too large. Max size: 50MB")
 
     session_id = str(uuid.uuid4())
     safe_name = f"{session_id}_{file.filename}"
@@ -37,6 +46,6 @@ async def upload_file(file: UploadFile = File(...)):
         session_id=session_id,
         file_name=file.filename,
         file_type=file_type,
-        file_path=str(saved_path),
-        message=f"Uploaded successfully. Session: {session_id}",
+        file_path=str(saved_path),  # returned so frontend passes it with instruction
+        message=f"File uploaded. Now tell me what to do with it.",
     )

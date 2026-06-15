@@ -1,96 +1,69 @@
-# SheetAgent AI — Bug Fix Package
+# SheetAgent AI — nginx "host not found" Fix
 
-## Errors Fixed
+## What was wrong
 
-### 1. numpy._core.multiarray ImportError (THE MAIN ERROR)
-**Root cause:** numpy 1.26.4 has a `numpy.core` module but pandas 2.2.x + Python 3.12 
-needs `numpy._core`. They conflict when pip resolves them together.
+Error:
+  host not found in upstream "backend:8000"
 
-**Fix:** Upgraded to `numpy==2.0.2` which has the `_core` module.
-Also the Dockerfile now installs numpy FIRST before everything else:
-```dockerfile
-RUN pip install --no-cache-dir numpy==2.0.2
-RUN pip install --no-cache-dir -r requirements.txt
-```
+Two causes:
 
-### 2. Missing __init__.py files
-Every Python package directory needs an `__init__.py`. 
-The Dockerfile now auto-creates them:
-```dockerfile
-RUN find /app/app -type d -exec touch {}/__init__.py \;
-```
+1. nginx started BEFORE backend was ready
+   nginx tries to resolve "backend:8000" at startup.
+   If backend container isn't running yet, DNS lookup fails → nginx crashes.
 
-### 3. api/routes/__init__.py circular import
-The `__init__.py` was importing all routes at module load time.
-Now uses explicit imports only when needed.
+2. nginx used static upstream blocks
+   Static upstream{} blocks are resolved ONCE at startup.
+   If backend isn't up yet, resolution fails permanently.
 
-### 4. LangChain/LangGraph version mismatch  
-`langgraph==0.1.9` is incompatible with `langchain==0.2.5`.
-**Fix:** Upgraded to `langchain==0.2.16` + `langgraph==0.2.4` + `langchain-core==0.2.40`
+## The Fix
 
-### 5. pydantic-settings model_config
-Pydantic v2 requires `model_config` dict instead of `class Config`.
-Fixed in `config.py`.
+FIX 1 — nginx.conf: Use Docker's internal DNS resolver + set $variable
+  resolver 127.0.0.11 valid=10s;   ← Docker's built-in DNS
+  set $backend_upstream http://backend:8000;  ← runtime variable, not static
+  proxy_pass $backend_upstream;    ← resolved at request time, not startup
 
-### 6. Optional deps crashing main.py
-Sentry, Prometheus, Phase2-4 routes — if any dep missing, app crashed entirely.
-**Fix:** All optional imports wrapped in `try/except` in `main.py`.
+  This means nginx can start even if backend isn't ready yet,
+  and retries DNS on every request.
 
-## Files to REPLACE in your project
+FIX 2 — docker-compose.yml: nginx depends_on backend with health check
+  nginx:
+    depends_on:
+      backend:
+        condition: service_healthy   ← wait for /health to return 200
 
-```
-backend/requirements.txt          ← MUST REPLACE (numpy fix)
-backend/Dockerfile                 ← MUST REPLACE (numpy install order)
-backend/app/main.py                ← MUST REPLACE (safe imports)
-backend/app/config.py              ← MUST REPLACE (pydantic v2 fix)
-backend/app/models/database.py     ← MUST REPLACE
-backend/app/models/state.py        ← MUST REPLACE
-backend/app/models/schemas.py      ← MUST REPLACE
-backend/app/services/ws_manager.py ← MUST REPLACE
-backend/app/services/workspace_service.py ← MUST REPLACE
-backend/app/services/session_store.py     ← MUST REPLACE
-backend/app/services/gemini_service.py    ← MUST REPLACE
-backend/app/parsers/csv_parser.py  ← MUST REPLACE
-backend/app/agents/graph.py        ← MUST REPLACE
-backend/app/api/routes/__init__.py ← MUST REPLACE
-backend/app/api/routes/upload.py   ← MUST REPLACE
-backend/app/api/routes/workspace.py← MUST REPLACE
-backend/app/api/routes/ws.py       ← MUST REPLACE
-backend/app/api/routes/agent.py    ← MUST REPLACE
-backend/app/api/routes/health.py   ← MUST REPLACE
-backend/app/utils/rate_limiter.py  ← MUST REPLACE
-docker-compose.yml                 ← MUST REPLACE
-.env.example                       ← MUST REPLACE
-```
+  This makes nginx wait until backend is actually running before starting.
 
-## ADD these missing __init__.py files
+## Files to REPLACE — only 2 files
 
-```
-backend/app/__init__.py                (empty file)
-backend/app/api/__init__.py            (empty file)
-backend/app/api/routes/__init__.py     (content: from . import upload, workspace, ws)
-backend/app/agents/__init__.py         (empty file)
-backend/app/services/__init__.py       (empty file)
-backend/app/parsers/__init__.py        (empty file)
-backend/app/models/__init__.py         (empty file)
-backend/app/utils/__init__.py          (empty file)
-```
+  nginx/nginx.conf       ← resolver + set $variable fix
+  docker-compose.yml     ← depends_on with service_healthy
 
-## Rebuild command (run after replacing files)
+## PowerShell commands
 
-```powershell
-# In VS Code PowerShell terminal:
-docker-compose down
-docker-compose up --build -d
-docker-compose logs -f backend
-```
+  cd "D:\Data Entery AI_Agent\sheetagent"
 
-## Verify it's working
+  # Full restart in correct order (postgres → redis → backend → frontend → nginx)
+  docker-compose down
+  docker-compose up -d
 
-```powershell
-# Should return {"status":"ok","version":"5.0.0"}
-Invoke-WebRequest -Uri "http://localhost/health" | Select-Object -Expand Content
+  # Watch startup sequence
+  docker-compose logs -f
 
-# Should return {"status":"ok","checks":{...}}
-Invoke-WebRequest -Uri "http://localhost/ready" | Select-Object -Expand Content
-```
+  # Once backend shows "Application startup complete", nginx will start
+  # Then open: http://localhost
+
+## Expected healthy startup order
+
+  1. postgres starts    → healthy
+  2. redis starts       → healthy
+  3. backend starts     → waits for postgres+redis → healthy (60s)
+  4. frontend starts    → ready
+  5. nginx starts last  → can now resolve backend:8000 → serves on port 80
+
+## Verify
+
+  curl http://localhost/health
+  # {"status":"ok","version":"5.0.0"}
+
+  curl http://localhost/
+  # Returns HTML of React app

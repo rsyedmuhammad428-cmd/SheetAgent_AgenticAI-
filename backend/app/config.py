@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from pathlib import Path
 from typing import Optional
@@ -7,6 +7,9 @@ from typing import Optional
 class Settings(BaseSettings):
     gemini_api_key: str = "missing"
     gemini_model: str = "gemini-1.5-flash"
+    
+    openrouter_api_key: str = "missing"
+    openrouter_model: str = "meta-llama/llama-3.1-8b-instruct"
 
     database_url: str = "sqlite+aiosqlite:///./sheetagent.db"
     redis_url: str = "redis://redis:6379/0"
@@ -15,7 +18,6 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 1440
 
     workspace_path: Path = Path("/app/workspace")
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:80", "http://localhost"]
     log_level: str = "INFO"
     environment: str = "development"
 
@@ -24,7 +26,11 @@ class Settings(BaseSettings):
 
     sentry_dsn: Optional[str] = None
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     @field_validator("database_url")
     @classmethod

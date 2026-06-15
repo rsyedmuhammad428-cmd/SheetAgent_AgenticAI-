@@ -1,7 +1,6 @@
-# NOTE: 'version' attribute removed — it's obsolete in modern Docker Compose
-
 services:
 
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -19,6 +18,7 @@ services:
     networks:
       - sheetagent_net
 
+  # ── Redis ───────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -33,11 +33,15 @@ services:
     networks:
       - sheetagent_net
 
+  # ── Backend ─────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "8000:8000"
+
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
@@ -45,7 +49,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - WORKSPACE_PATH=/app/workspace
       - SECRET_KEY=${SECRET_KEY:-dev-secret-change-me}
-      - CORS_ORIGINS=["http://localhost","http://frontend","http://localhost:5173","http://localhost:80"]
+      - CORS_ORIGINS=["http://localhost","http://localhost:5173","http://localhost:80"]
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SENTRY_DSN=${SENTRY_DSN:-}
@@ -58,13 +62,15 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
       start_period: 60s
-      retries: 3
+      retries: 5
     networks:
       - sheetagent_net
 
+  # ── Frontend ────────────────────────────────────────────────────────────────
+# ── Frontend ────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -72,9 +78,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # FIXED: Using a more resilient shell-wrapped curl command for the internal build port
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     networks:
       - sheetagent_net
 
+  # ── Nginx reverse proxy ─────────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -83,8 +96,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
     networks:
       - sheetagent_net
 

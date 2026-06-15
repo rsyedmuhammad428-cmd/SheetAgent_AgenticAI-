@@ -18,6 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Set HOME for EasyOCR model cache
+ENV HOME=/app
+
+# 1. Create the sheetagent system group and user first
+RUN groupadd -r sheetagent && useradd -r -g sheetagent -d /home/sheetagent -m sheetagent
+
+# 2. Create the directory (if it doesn't already exist) and grant ownership safely
+RUN mkdir -p /home/sheetagent && chown -R sheetagent:sheetagent /home/sheetagent
 # Increase timeouts and retries for slow connections
 RUN pip install --no-cache-dir --upgrade pip && \
     pip config set global.timeout 5000 && \
@@ -25,12 +33,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY requirements.txt .
 
-# Install numpy first, then everything else
-RUN pip install --no-cache-dir "numpy>=1.26.0,<2.0.0" && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Create non-root user for security
-RUN groupadd -r sheetagent && useradd -r -g sheetagent sheetagent
+# Install numpy first with extended timeout, then everything else
+RUN pip install --no-cache-dir --default-timeout=1000 "numpy>=1.26.0,<2.0.0" && \
+    pip install --no-cache-dir --default-timeout=1000 -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -44,9 +49,9 @@ RUN mkdir -p /app/workspace/{incoming,processing,extracted,cleaned,excels,charts
 
 USER sheetagent
 
-# Pre-download EasyOCR English model (~100MB) to avoid cold start delay
-# The || true means build won't fail if this times out
-RUN python -c "import easyocr; easyocr.Reader(['en'], gpu=False, verbose=False)" || true
+# Skip EasyOCR pre-download to speed up builds
+# Model will download on first use instead
+# RUN python -c "import easyocr; easyocr.Reader(['en'], gpu=False, verbose=False)" || true
 
 EXPOSE 8000
 

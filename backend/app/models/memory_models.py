@@ -46,7 +46,7 @@ class UserPreferences(Base):
     # Raw JSON for arbitrary extras
     extras = Column(JSON, default={})
 
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class SessionHistory(Base):
@@ -63,7 +63,7 @@ class SessionHistory(Base):
     plan_steps    = Column(JSON, default=[])
     column_names  = Column(JSON, default=[])
     quality_score = Column(Float, nullable=True)
-    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class MemorySnippet(Base):
@@ -74,5 +74,6 @@ class MemorySnippet(Base):
     value      = Column(Text)
     source     = Column(String, default="inferred")  # "inferred" | "explicit"
     confidence = Column(Float, default=0.8)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
