@@ -1,0 +1,38 @@
+version: "3.9"
+
+# Development override — uses SQLite + in-memory session store
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATABASE_URL=sqlite+aiosqlite:///./sheetagent.db
+      - REDIS_URL=redis://localhost:6379/0
+      - WORKSPACE_PATH=/app/workspace
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=["http://localhost:5173","http://localhost:3000","http://frontend"]
+    volumes:
+      - ./backend:/app
+      - ./workspace:/app/workspace
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:80"
+
+  # No postgres, no redis needed for dev
+  postgres:
+    profiles: ["skip"]
+  redis:
+    profiles: ["skip"]
+  nginx:
+    profiles: ["skip"]

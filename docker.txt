@@ -1,0 +1,38 @@
+### Step 1: Review and Accept the Code Change
+I have just sent a code change for your backend/Dockerfile .
+
+- Please click the "Accept" button on the diff shown above.
+- This adds "Ultra-Stable" settings (2000s timeout and 20 retries) to handle your slow internet.
+### Step 2: Open your Terminal
+Open the terminal in your IDE (Trae) or a PowerShell window. Make sure you are in the root folder:
+
+```
+cd "D:\Data Entery 
+AI_Agent\sheetagent"
+```
+### Step 3: Run the Restart Command
+Copy and paste this command into your terminal:
+
+```
+docker-compose build --no-cache 
+--progress=plain backend
+```
+Using --no-cache ensures any half-downloaded/broken files are deleted, and --progress=plain lets you see every download detail.
+
+### Step 4: Start the Services
+Once Step 3 finishes (it will take a few hours), run this final command to start everything:
+
+```
+docker-compose up -d
+```
+Summary of what we are doing:
+
+- We are telling Docker to be extremely "patient" with your connection.
+- We are installing the "Heavy" AI parts separately so they don't crash the rest of the build.
+- What to do now? Click Accept on the code change above and run the command in Step 3 .
+
+
+
+docker-compose down
+docker-compose up -d
+docker-compose up --build -d
