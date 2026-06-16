@@ -1,17 +1,16 @@
 /**
- * index.tsx — SheetAgent main page
+ * index.tsx — SheetAgent main page with auth gate + smart greeting
  *
- * Backend endpoints used:
- *   POST /api/upload/              — attach file
- *   POST /api/chat/                — send message
- *   GET  /api/download/excel/:fn   — download .xlsx
- *   WS   /ws/:session_id           — live log stream
+ * Auth flow:
+ *  1. Check localStorage for saved token + user
+ *  2. If not logged in → show <AuthPage />
+ *  3. If logged in → show the full SheetAgent app
+ *  4. Header shows user name + logout button
  *
- * Human-in-the-loop:
- *   • Clarify option buttons → sends __choice:<key> to backend
- *   • Stop button → AbortController cancels in-flight request
+ * Greeting: "Good morning/afternoon/evening, {first_name}" — updates to
+ * actual time of day, not hardcoded.
  */
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
@@ -20,32 +19,25 @@ import { WelcomeScreen } from "@/components/sheet-agent/WelcomeScreen";
 import { SheetView } from "@/components/sheet-agent/SheetView";
 import { ChartView } from "@/components/sheet-agent/ChartView";
 import { LeftSidebar } from "@/components/sheet-agent/LeftSidebar";
+import { AuthPage } from "@/components/sheet-agent/AuthPage";
 import {
-  sendMessage,
-  uploadFile,
-  downloadExcel,
-  abortCurrentRequest,
-  connectWebSocket,
-  disconnectWebSocket,
-  actionToMessageFields,
-  detectPastedTable,
-  type AgentFile,
-  type ChartData,
-  type ChatMessage,
-  type ChatSession,
-  type ClarifyOption,
-  type SheetData,
+  isLoggedIn, getSavedUser, logout as authLogout,
+  getMe, type User,
+} from "@/lib/auth";
+import {
+  sendMessage, uploadFile, downloadExcel,
+  abortCurrentRequest, connectWebSocket, disconnectWebSocket,
+  actionToMessageFields, detectPastedTable,
+  type AgentFile, type ChartData, type ChatMessage,
+  type ClarifyOption, type SheetData,
 } from "@/lib/sheet-agent";
+import { LogOut, User as UserIcon } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Sheet Agent — AI spreadsheets & charts" },
-      {
-        name: "description",
-        content:
-          "Paste data or describe a sheet. Sheet Agent builds tables, charts, and dashboards instantly.",
-      },
+      { title: "SheetAgent AI — Smart Excel Builder" },
+      { name: "description", content: "AI-powered Excel sheets, charts, and dashboards." },
     ],
   }),
   component: SheetAgentPage,
@@ -55,13 +47,33 @@ let idc = 0;
 const uid = () => `${Date.now()}-${++idc}`;
 
 function SheetAgentPage() {
+  // ── Auth state ─────────────────────────────────────────────────────────────
+  const [user, setUser] = useState<User | null>(() => {
+    // Restore from localStorage on first render
+    if (isLoggedIn()) return getSavedUser();
+    return null;
+  });
+  const [authChecking, setAuthChecking] = useState(isLoggedIn());
+
+  // Verify token with backend on mount (in case it expired)
+  useEffect(() => {
+    if (!isLoggedIn()) { setAuthChecking(false); return; }
+    getMe()
+      .then((u) => { setUser(u); })
+      .catch(() => {
+        // Token invalid/expired → log out silently
+        authLogout();
+        setUser(null);
+      })
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+  // ── App state ──────────────────────────────────────────────────────────────
   const [messages,     setMessages]     = useState<ChatMessage[]>([]);
   const [status,       setStatus]       = useState<"idle" | "loading">("idle");
   const [sheet,        setSheet]        = useState<SheetData | null>(null);
   const [charts,       setCharts]       = useState<ChartData[]>([]);
   const [files,        setFiles]        = useState<AgentFile[]>([]);
-  const [recentChats,  setRecentChats]  = useState<ChatSession[]>([]);
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeFileId, setActiveFileId] = useState<string | undefined>();
   const [sidebarOpen,  setSidebarOpen]  = useState(true);
 
@@ -69,30 +81,29 @@ function SheetAgentPage() {
   const uploadedPathRef = useRef<string | null>(null);
   const seenFilenames   = useRef<Set<string>>(new Set());
 
-  function chatTitle(msgs: ChatMessage[]) {
-    const firstUser = msgs.find((m) => m.role === "user");
-    const raw = firstUser?.text?.trim() || "New conversation";
-    return raw.length > 50 ? `${raw.slice(0, 50)}…` : raw;
+  // ── Smart greeting (updates live) ─────────────────────────────────────────
+  const [greeting, setGreeting] = useState(() => getGreeting());
+  useEffect(() => {
+    const id = setInterval(() => setGreeting(getGreeting()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  function getGreeting() {
+    const h = new Date().getHours();
+    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
   }
 
-  function persistCurrentChat() {
-    if (messages.length === 0) return;
-    const id = activeChatId ?? uid();
-    const session: ChatSession = {
-      id,
-      title: chatTitle(messages),
-      messages: [...messages],
-      files: [...files],
-      sheet,
-      charts: [...charts],
-      createdAt: new Date().toISOString(),
-      sessionId: sessionIdRef.current,
-    };
-    setRecentChats((prev) => [session, ...prev.filter((c) => c.id !== id)].slice(0, 20));
-    if (!activeChatId) setActiveChatId(id);
-  }
+  // ── Auth handlers ──────────────────────────────────────────────────────────
+  const handleAuth = (u: User) => setUser(u);
 
-  function resetActiveChat() {
+  const handleLogout = async () => {
+    await authLogout();
+    setUser(null);
+    handleNewChat();
+  };
+
+  // ── Chat helpers ───────────────────────────────────────────────────────────
+  const handleNewChat = () => {
     disconnectWebSocket();
     sessionIdRef.current    = null;
     uploadedPathRef.current = null;
@@ -102,36 +113,8 @@ function SheetAgentPage() {
     setCharts([]);
     setFiles([]);
     setActiveFileId(undefined);
-    setActiveChatId(null);
-    setStatus("idle");
-  }
-
-  // ── Reset ─────────────────────────────────────────────────────────────────
-  const handleNewChat = () => {
-    abortCurrentRequest();
-    persistCurrentChat();
-    resetActiveChat();
   };
 
-  const handleSelectChat = (chatId: string) => {
-    if (chatId === activeChatId) return;
-    abortCurrentRequest();
-    const target = recentChats.find((c) => c.id === chatId);
-    if (!target) return;
-    persistCurrentChat();
-    resetActiveChat();
-    setActiveChatId(target.id);
-    setMessages(target.messages);
-    setFiles(target.files);
-    setSheet(target.sheet);
-    setCharts(target.charts);
-    sessionIdRef.current = target.sessionId ?? null;
-    if (target.sessionId) setupWs(target.sessionId);
-  };
-
-  const showWelcome = messages.length === 0;
-
-  // ── WebSocket ─────────────────────────────────────────────────────────────
   function setupWs(sessionId: string) {
     connectWebSocket(sessionId, (event) => {
       const { type, data } = event as { type: string; data: Record<string, unknown> };
@@ -160,26 +143,25 @@ function SheetAgentPage() {
     }
     if (ch?.length) {
       setCharts(ch);
-      setFiles((p) => [...ch.map((c) => ({ id: c.id, name: c.title,
-        kind: "chart" as const, createdAt: new Date().toISOString() })), ...p]);
+      setFiles((p) => [...ch.map((c) => ({
+        id: c.id, name: c.title, kind: "chart" as const,
+        createdAt: new Date().toISOString(),
+      })), ...p]);
     }
     if (af?.length) setFiles((p) => [...af, ...p]);
   }
 
-  // ── Core backend call ─────────────────────────────────────────────────────
+  // ── Backend call ───────────────────────────────────────────────────────────
   async function callBackend(text: string) {
     setStatus("loading");
     try {
       const res = await sendMessage(text, sessionIdRef.current, uploadedPathRef.current);
-
       if (res.session_id && res.session_id !== sessionIdRef.current) {
         sessionIdRef.current = res.session_id;
         setupWs(res.session_id);
       }
       uploadedPathRef.current = null;
-
       const extra = actionToMessageFields(res.action);
-
       if (extra.trigger === "download" && extra.filename &&
           seenFilenames.current.has(extra.filename)) {
         addMsg({ role: "assistant", text: res.text });
@@ -188,23 +170,20 @@ function SheetAgentPage() {
           seenFilenames.current.add(extra.filename);
         addMsg({ role: "assistant", text: res.text, ...extra });
       }
-
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
-      if (e?.name === "AbortError") return; // user stopped — message already added
-
-      // Graceful local fallback when backend is unreachable
+      if (e?.name === "AbortError") return;
       const lastUser = [...messages].reverse().find((m) => m.role === "user");
       const localSheet = lastUser ? detectPastedTable(lastUser.text) : null;
       if (localSheet) {
         addMsg({
           role: "assistant",
-          text: `I found **${localSheet.rows.length} rows** with columns: ${localSheet.columns.join(", ")}.\nWhat would you like me to build?`,
+          text: `I found **${localSheet.rows.length} rows**.\nWhat would you like me to build?`,
           trigger: "clarify",
           options: [
-            { id: "basic",          label: "📋 Basic Sheet"          },
-            { id: "with_chart",     label: "📊 + Bar Chart"          },
-            { id: "with_dashboard", label: "📈 + Dashboard"          },
+            { id: "basic",          label: "📋 Basic Sheet"                        },
+            { id: "with_chart",     label: "📊 + Bar Chart"                        },
+            { id: "with_dashboard", label: "📈 + Dashboard"                        },
             { id: "full",           label: "🎯 Full (Recommended)", recommended: true },
           ],
         });
@@ -217,9 +196,8 @@ function SheetAgentPage() {
     }
   }
 
-  // ── Public handlers (passed to ChatPanel) ─────────────────────────────────
+  // ── Handlers ───────────────────────────────────────────────────────────────
   const handleSend = (text: string) => {
-    if (!activeChatId) setActiveChatId(uid());
     addMsg({ role: "user", text });
     callBackend(text);
   };
@@ -268,77 +246,105 @@ function SheetAgentPage() {
       const extra = actionToMessageFields(res.action);
       addMsg({ role: "assistant", text: res.text, ...extra });
     } catch {
-      // Local demo fallback
-      const lastUser = [...messages].reverse().find((m) => m.role === "user");
-      const localSheet = lastUser ? detectPastedTable(lastUser.text) : null;
-      if (!localSheet) {
-        addMsg({ role: "assistant", text: "Paste your data first, then pick an option." });
-        return;
-      }
-      setStatus("loading");
-      applyPayload(localSheet);
-      const numCol = localSheet.columns.find((c, i) =>
-        localSheet.rows.every((r) => typeof r[i] === "number"));
-      const xCol = localSheet.columns[0];
-      const localCharts: ChartData[] = [];
-      if (opt.id !== "basic" && numCol) {
-        const data = localSheet.rows.map((r) => {
-          const o: Record<string, string | number> = {};
-          localSheet.columns.forEach((c, i) => (o[c] = r[i]));
-          return o;
-        });
-        localCharts.push({ id: uid(), type: "bar",
-          title: `${numCol} by ${xCol}`, data, xKey: xCol, yKeys: [numCol] });
-        if (opt.id === "with_dashboard" || opt.id === "full")
-          localCharts.push({ id: uid(), type: "line",
-            title: `Trend — ${numCol}`, data, xKey: xCol, yKeys: [numCol] });
-      }
-      if (localCharts.length) applyPayload(undefined, localCharts);
-      addMsg({ role: "assistant",
-        text: `Done! Built **${opt.label}** with ${localSheet.rows.length} rows${localCharts.length ? ` and ${localCharts.length} chart(s)` : ""}.` });
-      setStatus("idle");
+      addMsg({ role: "assistant", text: "Backend not reachable. Paste your data and try again." });
     }
   };
 
   const hasArtifacts = useMemo(() => sheet !== null || charts.length > 0, [sheet, charts]);
 
+  // ── Render gates ───────────────────────────────────────────────────────────
+
+  // Loading token verification
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <span className="text-sm">Signing you in…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in → auth page
+  if (!user) {
+    return (
+      <>
+        <Toaster richColors position="top-center" />
+        <AuthPage onAuth={handleAuth} />
+      </>
+    );
+  }
+
+  // First name for greeting
+  const firstName = user.full_name?.split(" ")[0] ?? "there";
+  const showWelcome = messages.length === 0;
+
+  // ── Main app ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
       <Toaster richColors position="top-center" />
 
-      <LeftSidebar
-        files={files}
-        recentChats={recentChats}
-        activeChatId={activeChatId}
-        activeId={activeFileId}
-        onSelect={setActiveFileId}
-        onSelectChat={handleSelectChat}
-        onNewChat={handleNewChat}
-        open={sidebarOpen}
-        onToggle={() => setSidebarOpen((o) => !o)}
-      />
-
-      <section className={hasArtifacts
-        ? "flex w-[440px] flex-col border-r border-border"
-        : "flex flex-1 flex-col"}>
-        <ChatPanel
-          messages={messages} status={status}
-          onSend={handleSend} onStop={handleStop}
-          onUpload={handleUpload} onDownload={handleDownload}
-          onPickOption={handlePickOption}
-          showWelcome={showWelcome}
-          welcomeSlot={<WelcomeScreen onPick={handleSend} />}
-        />
-      </section>
-
-      {hasArtifacts && (
-        <section className="flex-1 overflow-y-auto bg-muted/20 p-6">
-          <div className="mx-auto max-w-5xl space-y-6">
-            {sheet && <SheetView sheet={sheet} />}
-            {charts.map((c) => <ChartView key={c.id} chart={c} />)}
+      {/* Top header bar */}
+      <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-card/80 px-4 backdrop-blur">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-foreground">SheetAgent AI</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            — {greeting}, {firstName}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UserIcon className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{user.email}</span>
           </div>
+          <button
+            onClick={handleLogout}
+            title="Sign out"
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Sign out</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <div className="flex flex-1 overflow-hidden">
+        <LeftSidebar
+          files={files} activeId={activeFileId} onSelect={setActiveFileId}
+          onNewChat={handleNewChat} open={sidebarOpen}
+          onToggle={() => setSidebarOpen((o) => !o)}
+        />
+
+        <section className={hasArtifacts
+          ? "flex w-[440px] flex-col border-r border-border"
+          : "flex flex-1 flex-col"}>
+          <ChatPanel
+            messages={messages} status={status}
+            onSend={handleSend} onStop={handleStop}
+            onUpload={handleUpload} onDownload={handleDownload}
+            onPickOption={handlePickOption}
+            showWelcome={showWelcome}
+            welcomeSlot={
+              <WelcomeScreen
+                onPick={handleSend}
+                greeting={greeting}
+                userName={firstName}
+              />
+            }
+          />
         </section>
-      )}
+
+        {hasArtifacts && (
+          <section className="flex-1 overflow-y-auto bg-muted/20 p-6">
+            <div className="mx-auto max-w-5xl space-y-6">
+              {sheet  && <SheetView  sheet={sheet} />}
+              {charts.map((c) => <ChartView key={c.id} chart={c} />)}
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }
