@@ -117,10 +117,12 @@ except Exception:
 # ── Core routers ──────────────────────────────────────────────────────────────
 from app.api.routes import upload, workspace, ws
 from app.api.routes.agent    import router as agent_router
+from app.api.routes.auth     import router as auth_router
 from app.api.routes.health   import router as health_router
 from app.api.routes.download import router as download_router
 from app.api.routes.chat     import router as chat_router
 
+app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(upload.router,    prefix="/api/upload",   tags=["upload"])
 app.include_router(agent_router,     prefix="/api/agent",    tags=["agent"])

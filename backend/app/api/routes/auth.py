@@ -159,11 +159,20 @@ async def register(body: RegisterIn, db: AsyncSession = Depends(_get_db)):
         raise HTTPException(409, "An account with this email already exists")
 
     import uuid
+    # Defensive: encode + truncate to bcrypt's 72-byte limit so no raw
+    # library error ever reaches the user, regardless of bcrypt version.
+    password_bytes = body.password.encode("utf-8")[:72]
+    try:
+        hashed_pw = pwd_ctx.hash(password_bytes)
+    except Exception as e:
+        logger.error(f"Password hashing error: {e}")
+        raise HTTPException(400, "Error processing password. Please try a different password.")
+
     user = _User(
         id        = str(uuid.uuid4()),
         email     = body.email.lower().strip(),
         full_name = body.full_name.strip(),
-        hashed_pw = pwd_ctx.hash(body.password),
+        hashed_pw = hashed_pw,
     )
     db.add(user)
     await db.commit()
@@ -189,7 +198,14 @@ async def login(body: LoginIn, db: AsyncSession = Depends(_get_db)):
     result = await db.execute(select(_User).where(_User.email == body.email.lower()))
     user   = result.scalar_one_or_none()
 
-    if not user or not pwd_ctx.verify(body.password, user.hashed_pw):
+    password_bytes = body.password.encode("utf-8")[:72]
+    try:
+        password_valid = bool(user) and pwd_ctx.verify(password_bytes, user.hashed_pw)
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        password_valid = False
+
+    if not user or not password_valid:
         raise HTTPException(401, "Invalid email or password")
 
     token = _make_token(user.id, user.email)
