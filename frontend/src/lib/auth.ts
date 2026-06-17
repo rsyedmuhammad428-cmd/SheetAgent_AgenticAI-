@@ -27,23 +27,35 @@ export interface AuthResponse {
 const TOKEN_KEY = "sheetagent_token";
 const USER_KEY  = "sheetagent_user";
 
+// ── SSR guard ─────────────────────────────────────────────────────────────────
+// TanStack Start renders this module on the Node.js server first (no DOM,
+// no localStorage). Every localStorage touchpoint must check for `window`
+// before running, or SSR crashes with "ReferenceError: localStorage is not
+// defined". On the server these simply no-op / return safe defaults; the
+// real values are picked up once the component re-runs in the browser.
+const isBrowser = () => typeof window !== "undefined";
+
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
 export function getToken(): string | null {
+  if (!isBrowser()) return null;
   return localStorage.getItem(TOKEN_KEY);
 }
 
 function saveAuth(res: AuthResponse) {
+  if (!isBrowser()) return;
   localStorage.setItem(TOKEN_KEY, res.access_token);
   localStorage.setItem(USER_KEY, JSON.stringify(res.user));
 }
 
 export function clearAuth() {
+  if (!isBrowser()) return;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
 
 export function getSavedUser(): User | null {
+  if (!isBrowser()) return null;
   try {
     const raw = localStorage.getItem(USER_KEY);
     return raw ? JSON.parse(raw) : null;

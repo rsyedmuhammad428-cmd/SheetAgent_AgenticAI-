@@ -48,16 +48,23 @@ const uid = () => `${Date.now()}-${++idc}`;
 
 function SheetAgentPage() {
   // ── Auth state ─────────────────────────────────────────────────────────────
-  const [user, setUser] = useState<User | null>(() => {
-    // Restore from localStorage on first render
-    if (isLoggedIn()) return getSavedUser();
-    return null;
-  });
-  const [authChecking, setAuthChecking] = useState(isLoggedIn());
+  // IMPORTANT (SSR safety): initial state must be IDENTICAL on the server and
+  // on the client's first render, or React throws a hydration mismatch.
+  // We always start with user=null, authChecking=true — the same on both —
+  // then resolve the real auth state inside useEffect, which only ever runs
+  // in the browser (never during SSR).
+  const [user,         setUser]         = useState<User | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
 
-  // Verify token with backend on mount (in case it expired)
+  // Resolve real auth state — client only, runs once after mount
   useEffect(() => {
     if (!isLoggedIn()) { setAuthChecking(false); return; }
+
+    // Show the cached user immediately for a snappy UI, then verify in
+    // the background in case the token has expired.
+    const cached = getSavedUser();
+    if (cached) setUser(cached);
+
     getMe()
       .then((u) => { setUser(u); })
       .catch(() => {
