@@ -111,6 +111,12 @@ Return a JSON task description:
                                    "has_calculations": True, "has_charts": False}],
             "color_theme": "professional",
             "style_notes": "",
+            "explicit_chart_instructions": self._extract_chart_instructions(user_message),
+            "chart_category_column": "",
+            "chart_value_column": "",
+            "chart_type_requested": self._extract_chart_type(user_message),
+            "conditional_formatting_instructions": "",
+            "heading_title": "",
         }
 
     # ── Step 2: Design workbook ───────────────────────────────────────────────
@@ -556,6 +562,33 @@ Use domain-specific column names. Return ONLY JSON starting with {{"""
         if meaningful:
             return " ".join(meaningful[:7]).title()
         return text[:50].title()
+
+    def _extract_chart_type(self, text: str) -> str:
+        """Extract requested chart type from user message."""
+        text_lower = text.lower()
+        if "pie" in text_lower:
+            return "pie"
+        elif "line" in text_lower:
+            return "line"
+        elif "area" in text_lower:
+            return "area"
+        elif "bar" in text_lower or "column" in text_lower:
+            return "bar"
+        return "bar"  # default
+
+    def _extract_chart_instructions(self, text: str) -> str:
+        """Extract user's chart instructions, e.g., 'bar graph by subject'."""
+        import re
+        # Look for patterns like "bar chart by X", "pie graph of Y", etc.
+        patterns = [
+            r"(bar|pie|line|column|area)\s+(chart|graph|plot)(?:\s+(?:by|of|with)\s+([a-zA-Z\s]+))?",
+            r"(pie|bar|line)\s+(?:by|for|of)\s+([a-zA-Z\s]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0).strip()
+        return ""
 
 
 # ── Helper: infer column type from name ──────────────────────────────────────

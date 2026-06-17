@@ -22,13 +22,13 @@ import { LeftSidebar } from "@/components/sheet-agent/LeftSidebar";
 import { AuthPage } from "@/components/sheet-agent/AuthPage";
 import {
   isLoggedIn, getSavedUser, logout as authLogout,
-  getMe, type User,
+  getMe, getToken, type User,
 } from "@/lib/auth";
 import {
-  sendMessage, uploadFile, downloadExcel,
+  sendMessage, uploadFile, downloadExcel, fetchChatHistory,
   abortCurrentRequest, connectWebSocket, disconnectWebSocket,
   actionToMessageFields, detectPastedTable,
-  type AgentFile, type ChartData, type ChatMessage,
+  type AgentFile, type ChartData, type ChatMessage, type ChatSession,
   type ClarifyOption, type SheetData,
 } from "@/lib/sheet-agent";
 import { LogOut, User as UserIcon } from "lucide-react";
@@ -55,6 +55,8 @@ function SheetAgentPage() {
   // in the browser (never during SSR).
   const [user,         setUser]         = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [recentChats,  setRecentChats]  = useState<ChatSession[]>([]);
+  const [chatsLoading, setChatsLoading] = useState(false);
 
   // Resolve real auth state — client only, runs once after mount
   useEffect(() => {
@@ -75,14 +77,29 @@ function SheetAgentPage() {
       .finally(() => setAuthChecking(false));
   }, []);
 
-  // ── App state ──────────────────────────────────────────────────────────────
-  const [messages,     setMessages]     = useState<ChatMessage[]>([]);
-  const [status,       setStatus]       = useState<"idle" | "loading">("idle");
-  const [sheet,        setSheet]        = useState<SheetData | null>(null);
-  const [charts,       setCharts]       = useState<ChartData[]>([]);
-  const [files,        setFiles]        = useState<AgentFile[]>([]);
-  const [activeFileId, setActiveFileId] = useState<string | undefined>();
-  const [sidebarOpen,  setSidebarOpen]  = useState(true);
+  // Load chat history after user is authenticated
+  useEffect(() => {
+    if (!user) return;
+    
+    setChatsLoading(true);
+    const token = getToken();
+    fetchChatHistory(token)
+      .then((sessions) => setRecentChats(sessions))
+      .catch((err) => {
+        console.error("Failed to load chat history:", err);
+        setRecentChats([]);
+      })
+      .finally(() => setChatsLoading(false));
+  }, [user]);
+
+  const [messages,       setMessages]       = useState<ChatMessage[]>([]);
+  const [status,         setStatus]         = useState<"idle" | "loading">("idle");
+  const [sheet,          setSheet]          = useState<SheetData | null>(null);
+  const [charts,         setCharts]         = useState<ChartData[]>([]);
+  const [files,          setFiles]          = useState<AgentFile[]>([]);
+  const [activeFileId,   setActiveFileId]   = useState<string | undefined>();
+  const [activeChatId,   setActiveChatId]   = useState<string | null>(null);
+  const [sidebarOpen,    setSidebarOpen]    = useState(true);
 
   const sessionIdRef    = useRef<string | null>(null);
   const uploadedPathRef = useRef<string | null>(null);
@@ -106,6 +123,7 @@ function SheetAgentPage() {
   const handleLogout = async () => {
     await authLogout();
     setUser(null);
+    setRecentChats([]);
     handleNewChat();
   };
 
@@ -120,6 +138,15 @@ function SheetAgentPage() {
     setCharts([]);
     setFiles([]);
     setActiveFileId(undefined);
+    setActiveChatId(null);
+  };
+
+  const handleSelectChat = (chatId: string) => {
+    setActiveChatId(chatId);
+    // Load the selected chat session
+    handleNewChat();
+    sessionIdRef.current = chatId;
+    // Optionally: fetch messages from backend for this chat
   };
 
   function setupWs(sessionId: string) {
@@ -319,8 +346,14 @@ function SheetAgentPage() {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         <LeftSidebar
-          files={files} activeId={activeFileId} onSelect={setActiveFileId}
-          onNewChat={handleNewChat} open={sidebarOpen}
+          files={files}
+          recentChats={recentChats}
+          activeId={activeFileId}
+          activeChatId={activeChatId}
+          onSelect={setActiveFileId}
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
+          open={sidebarOpen}
           onToggle={() => setSidebarOpen((o) => !o)}
         />
 

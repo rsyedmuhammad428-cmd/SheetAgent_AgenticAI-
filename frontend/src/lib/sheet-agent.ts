@@ -5,6 +5,7 @@
  *
  *   POST /api/chat/                    — { message, session_id, uploaded_file_path }
  *                                       → { text, intent, action, session_id }
+ *   GET  /api/chat/history             — fetch user's private chat sessions (requires auth)
  *   POST /api/upload/                  — multipart file
  *                                       → { session_id, file_name, file_type, file_path, message }
  *   GET  /api/download/excel/:filename — streams .xlsx
@@ -44,6 +45,14 @@ export interface AgentFile {
   name: string;
   kind: "sheet" | "chart" | "doc";
   createdAt: string;
+}
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  message_count: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatAction {
@@ -100,9 +109,19 @@ export async function sendMessage(
   uploadedFilePath?: string | null,
 ): Promise<BackendChatResponse> {
   _currentAbort = new AbortController();
+  
+  // Import auth helpers to get token
+  const { getToken } = await import('./auth');
+  const token = getToken();
+  
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  
   const res = await fetch(`${API_BASE}/api/chat/`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     signal: _currentAbort.signal,
     body: JSON.stringify({
       message,
@@ -116,6 +135,31 @@ export async function sendMessage(
     throw new Error(err.detail || err.message || `Server error ${res.status}`);
   }
   return res.json();
+}
+
+// ── Chat History (Secure) ─────────────────────────────────────────────────────
+
+export async function fetchChatHistory(token?: string): Promise<ChatSession[]> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  
+  const res = await fetch(`${API_BASE}/api/chat/history`, {
+    method: "GET",
+    headers,
+  });
+  
+  if (!res.ok) {
+    if (res.status === 401) {
+      // Not authenticated, return empty list
+      return [];
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || `Failed to fetch history: ${res.status}`);
+  }
+  
+  return res.json() as Promise<ChatSession[]>;
 }
 
 // ── File upload ───────────────────────────────────────────────────────────────

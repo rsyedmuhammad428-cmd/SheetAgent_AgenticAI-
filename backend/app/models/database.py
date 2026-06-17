@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, DateTime, JSON, text
+from sqlalchemy import Column, String, DateTime, JSON, text, ForeignKey
 from datetime import datetime, timezone
 import logging
 
@@ -46,6 +46,18 @@ class SessionRecord(Base):
     state_json  = Column(JSON, nullable=True)
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ChatSession(Base):
+    """User chat sessions - only logged-in users can see their own"""
+    __tablename__ = "chat_sessions"
+
+    id          = Column(String, primary_key=True)
+    user_id     = Column(String, nullable=False, index=True)
+    title       = Column(String(255), nullable=False)
+    message_count = Column(String, default="0")
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 async def init_db():
