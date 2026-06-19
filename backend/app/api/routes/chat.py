@@ -13,17 +13,98 @@ New secure endpoints:
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, timezone
 import logging
 import uuid
 
-from sqlalchemy import select, desc
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
+
+
+def _iso(dt: Optional[datetime]) -> str:
+    return (dt or datetime.now(timezone.utc)).isoformat()
+
+
+def _get_user_id_from_creds(creds: HTTPAuthorizationCredentials) -> Optional[str]:
+    from app.api.routes.auth import _decode_token
+
+    payload = _decode_token(creds.credentials)
+    return payload.get("sub")
+
+
+async def _persist_chat_history(
+    *,
+    user_id: str,
+    session_id: str,
+    user_message: str,
+    assistant_text: str,
+    assistant_action: Optional[dict[str, Any]] = None,
+) -> None:
+    from app.models.database import ChatMessageRecord, ChatSession, AsyncSessionLocal
+
+    now = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        session_result = await db.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )
+        chat_session = session_result.scalar_one_or_none()
+
+        if chat_session is None:
+            chat_session = ChatSession(
+                id=session_id,
+                user_id=user_id,
+                title=user_message[:100] if user_message else "New Chat",
+                message_count="0",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(chat_session)
+        elif chat_session.user_id != user_id:
+            logger.warning(
+                "Skipping history persist for session %s: owner mismatch", session_id
+            )
+            return
+        elif (not chat_session.title or chat_session.title == "New Chat") and user_message:
+            chat_session.title = user_message[:100]
+
+        db.add(
+            ChatMessageRecord(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="user",
+                text=user_message,
+                action_json={},
+                created_at=now,
+            )
+        )
+        db.add(
+            ChatMessageRecord(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="assistant",
+                text=assistant_text,
+                action_json=assistant_action or {},
+                created_at=now,
+            )
+        )
+
+        await db.flush()
+
+        count_result = await db.execute(
+            select(func.count())
+            .select_from(ChatMessageRecord)
+            .where(ChatMessageRecord.session_id == session_id)
+        )
+        total_messages = count_result.scalar_one()
+        chat_session.message_count = str(total_messages)
+        chat_session.updated_at = now
+        await db.commit()
 
 
 class ChatRequest(BaseModel):
@@ -45,6 +126,14 @@ class ChatSessionOut(BaseModel):
     message_count: str
     created_at: str
     updated_at: str
+
+
+class StoredMessageOut(BaseModel):
+    id: str
+    role: str
+    text: str
+    action: dict[str, Any] = {}
+    created_at: str
 
 
 # ── Auth dependencies ─────────────────────────────────────────────────────────
@@ -94,24 +183,17 @@ async def chat(
 
         intent_str = response.intent.value if hasattr(response.intent, "value") else str(response.intent)
 
-        # If user is authenticated and this is a new session, save it to chat_sessions table
-        if current_user_id and not body.session_id:
+        if current_user_id:
             try:
-                from app.models.database import ChatSession, AsyncSessionLocal
-                async with AsyncSessionLocal() as session:
-                    new_session = ChatSession(
-                        id=new_session_id,
-                        user_id=current_user_id,
-                        title=body.message[:100] if body.message else "New Chat",
-                        message_count="1",
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                    session.add(new_session)
-                    await session.commit()
-                    logger.info(f"Saved chat session {new_session_id} for user {current_user_id}")
+                await _persist_chat_history(
+                    user_id=current_user_id,
+                    session_id=new_session_id,
+                    user_message=body.message,
+                    assistant_text=response.text,
+                    assistant_action=response.action,
+                )
             except Exception as e:
-                logger.warning(f"Failed to save chat session: {e}")
+                logger.warning(f"Failed to persist chat history: {e}")
 
         return ChatResponse(
             text=response.text,
@@ -166,7 +248,7 @@ async def get_chat_history(
             result = await session.execute(
                 select(ChatSession)
                 .where(ChatSession.user_id == user_id)
-                .order_by(desc(ChatSession.created_at))
+                .order_by(desc(ChatSession.updated_at), desc(ChatSession.created_at))
             )
             sessions = result.scalars().all()
             
@@ -175,8 +257,8 @@ async def get_chat_history(
                     id=s.id,
                     title=s.title,
                     message_count=s.message_count,
-                    created_at=s.created_at.isoformat(),
-                    updated_at=s.updated_at.isoformat(),
+                    created_at=_iso(s.created_at),
+                    updated_at=_iso(s.updated_at),
                 )
                 for s in sessions
             ]
@@ -186,6 +268,56 @@ async def get_chat_history(
     except Exception as e:
         logger.error(f"Failed to fetch chat history: {e}")
         raise HTTPException(500, f"Failed to fetch history: {str(e)}")
+
+
+@router.get("/history/{session_id}", response_model=list[StoredMessageOut])
+async def get_chat_messages(
+    session_id: str,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
+):
+    """Get all stored messages for a chat session — owner only."""
+    if not creds:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+
+    user_id = _get_user_id_from_creds(creds)
+    if not user_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    try:
+        from app.models.database import ChatMessageRecord, ChatSession, AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            session_result = await db.execute(
+                select(ChatSession).where(ChatSession.id == session_id)
+            )
+            session = session_result.scalar_one_or_none()
+            if not session:
+                raise HTTPException(404, "Chat session not found")
+            if session.user_id != user_id:
+                raise HTTPException(403, "Not authorized to view this session")
+
+            messages_result = await db.execute(
+                select(ChatMessageRecord)
+                .where(ChatMessageRecord.session_id == session_id)
+                .order_by(asc(ChatMessageRecord.created_at), asc(ChatMessageRecord.id))
+            )
+            messages = messages_result.scalars().all()
+
+            return [
+                StoredMessageOut(
+                    id=message.id,
+                    role=message.role,
+                    text=message.text,
+                    action=message.action_json or {},
+                    created_at=_iso(message.created_at),
+                )
+                for message in messages
+            ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch chat messages: {e}")
+        raise HTTPException(500, f"Failed to fetch chat messages: {str(e)}")
 
 
 @router.delete("/history/{session_id}")
