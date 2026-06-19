@@ -1,14 +1,10 @@
 /**
- * index.tsx — SheetAgent main page with auth gate + smart greeting
+ * index.tsx — SheetAgent main page — fully responsive
  *
- * Auth flow:
- *  1. Check localStorage for saved token + user
- *  2. If not logged in → show <AuthPage />
- *  3. If logged in → show the full SheetAgent app
- *  4. Header shows user name + logout button
- *
- * Greeting: "Good morning/afternoon/evening, {first_name}" — updates to
- * actual time of day, not hardcoded.
+ * Breakpoints:
+ *  Mobile  <768px  : sidebar hidden, hamburger menu in header
+ *  Tablet  768-1023px: sidebar as overlay, header compact
+ *  Desktop ≥1024px : sidebar inline, full 3-column layout
  */
 import { useMemo, useRef, useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -20,18 +16,19 @@ import { SheetView } from "@/components/sheet-agent/SheetView";
 import { ChartView } from "@/components/sheet-agent/ChartView";
 import { LeftSidebar } from "@/components/sheet-agent/LeftSidebar";
 import { AuthPage } from "@/components/sheet-agent/AuthPage";
+import { getPakistanGreeting } from "@/lib/utils";
 import {
   isLoggedIn, getSavedUser, logout as authLogout,
   getMe, getToken, type User,
 } from "@/lib/auth";
 import {
-  sendMessage, uploadFile, downloadExcel, fetchChatHistory,
+  sendMessage, uploadFile, downloadExcel, fetchChatHistory, fetchChatMessages, deleteChatSession,
   abortCurrentRequest, connectWebSocket, disconnectWebSocket,
   actionToMessageFields, detectPastedTable,
   type AgentFile, type ChartData, type ChatMessage, type ChatSession,
   type ClarifyOption, type SheetData,
 } from "@/lib/sheet-agent";
-import { LogOut, User as UserIcon } from "lucide-react";
+import { LogOut, User as UserIcon, Menu } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -47,77 +44,58 @@ let idc = 0;
 const uid = () => `${Date.now()}-${++idc}`;
 
 function SheetAgentPage() {
-  // ── Auth state ─────────────────────────────────────────────────────────────
-  // IMPORTANT (SSR safety): initial state must be IDENTICAL on the server and
-  // on the client's first render, or React throws a hydration mismatch.
-  // We always start with user=null, authChecking=true — the same on both —
-  // then resolve the real auth state inside useEffect, which only ever runs
-  // in the browser (never during SSR).
+  // ── Auth state (SSR-safe: always start null/true) ───────────────────────
   const [user,         setUser]         = useState<User | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
   const [recentChats,  setRecentChats]  = useState<ChatSession[]>([]);
   const [chatsLoading, setChatsLoading] = useState(false);
 
-  // Resolve real auth state — client only, runs once after mount
   useEffect(() => {
     if (!isLoggedIn()) { setAuthChecking(false); return; }
-
-    // Show the cached user immediately for a snappy UI, then verify in
-    // the background in case the token has expired.
     const cached = getSavedUser();
     if (cached) setUser(cached);
-
     getMe()
-      .then((u) => { setUser(u); })
-      .catch(() => {
-        // Token invalid/expired → log out silently
-        authLogout();
-        setUser(null);
-      })
+      .then((u) => setUser(u))
+      .catch(() => { authLogout(); setUser(null); })
       .finally(() => setAuthChecking(false));
   }, []);
 
-  // Load chat history after user is authenticated
   useEffect(() => {
     if (!user) return;
-    
     setChatsLoading(true);
-    const token = getToken();
-    fetchChatHistory(token)
-      .then((sessions) => setRecentChats(sessions))
-      .catch((err) => {
-        console.error("Failed to load chat history:", err);
-        setRecentChats([]);
-      })
+    fetchChatHistory(getToken())
+      .then(setRecentChats)
+      .catch(() => setRecentChats([]))
       .finally(() => setChatsLoading(false));
   }, [user]);
 
-  const [messages,       setMessages]       = useState<ChatMessage[]>([]);
-  const [status,         setStatus]         = useState<"idle" | "loading">("idle");
-  const [sheet,          setSheet]          = useState<SheetData | null>(null);
-  const [charts,         setCharts]         = useState<ChartData[]>([]);
-  const [files,          setFiles]          = useState<AgentFile[]>([]);
-  const [activeFileId,   setActiveFileId]   = useState<string | undefined>();
-  const [activeChatId,   setActiveChatId]   = useState<string | null>(null);
-  const [sidebarOpen,    setSidebarOpen]    = useState(true);
+  // ── App state ────────────────────────────────────────────────────────────
+  const [messages,     setMessages]     = useState<ChatMessage[]>([]);
+  const [status,       setStatus]       = useState<"idle" | "loading">("idle");
+  const [sheet,        setSheet]        = useState<SheetData | null>(null);
+  const [charts,       setCharts]       = useState<ChartData[]>([]);
+  const [files,        setFiles]        = useState<AgentFile[]>([]);
+  const [activeFileId, setActiveFileId] = useState<string | undefined>();
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  // Sidebar: open by default on desktop, closed on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 1024 : true
+  );
 
   const sessionIdRef    = useRef<string | null>(null);
   const uploadedPathRef = useRef<string | null>(null);
   const seenFilenames   = useRef<Set<string>>(new Set());
 
-  // ── Smart greeting (updates live) ─────────────────────────────────────────
-  const [greeting, setGreeting] = useState(() => getGreeting());
+  // ── Pakistan-time greeting (updates every minute) ─────────────────────
+  const [greeting, setGreeting] = useState("Good morning");
   useEffect(() => {
-    const id = setInterval(() => setGreeting(getGreeting()), 60_000);
+    setGreeting(getPakistanGreeting());
+    const id = setInterval(() => setGreeting(getPakistanGreeting()), 60_000);
     return () => clearInterval(id);
   }, []);
 
-  function getGreeting() {
-    const h = new Date().getHours();
-    return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  }
-
-  // ── Auth handlers ──────────────────────────────────────────────────────────
+  // ── Auth handlers ──────────────────────────────────────────────────────
   const handleAuth = (u: User) => setUser(u);
 
   const handleLogout = async () => {
@@ -127,7 +105,7 @@ function SheetAgentPage() {
     handleNewChat();
   };
 
-  // ── Chat helpers ───────────────────────────────────────────────────────────
+  // ── Chat helpers ────────────────────────────────────────────────────────
   const handleNewChat = () => {
     disconnectWebSocket();
     sessionIdRef.current    = null;
@@ -141,12 +119,37 @@ function SheetAgentPage() {
     setActiveChatId(null);
   };
 
-  const handleSelectChat = (chatId: string) => {
-    setActiveChatId(chatId);
-    // Load the selected chat session
-    handleNewChat();
+  const handleSelectChat = async (chatId: string) => {
+    handleNewChat();            // clears first
+    setActiveChatId(chatId);   // then sets (stays set)
     sessionIdRef.current = chatId;
-    // Optionally: fetch messages from backend for this chat
+    try {
+      const stored = await fetchChatMessages(chatId, getToken() ?? undefined);
+      setMessages(stored.map((m) => ({
+        id: m.id, role: m.role, text: m.text,
+        ...actionToMessageFields(m.action || {}),
+      })));
+      setupWs(chatId);
+    } catch {
+      toast.error("Could not load that conversation.");
+    }
+  };
+
+  async function refreshChatHistory() {
+    if (!user) return;
+    try { setRecentChats(await fetchChatHistory(getToken())); } catch {}
+  }
+
+  const handleDeleteChat = async (chatId: string) => {
+    try {
+      await deleteChatSession(chatId, getToken() ?? undefined);
+      // Remove from local state immediately (no reload needed)
+      setRecentChats((prev) => prev.filter((c) => c.id !== chatId));
+      // If the deleted chat was the active one, clear the view
+      if (sessionIdRef.current === chatId) handleNewChat();
+    } catch {
+      toast.error("Could not delete that conversation.");
+    }
   };
 
   function setupWs(sessionId: string) {
@@ -167,25 +170,7 @@ function SheetAgentPage() {
     setMessages((p) => [...p, { id: uid(), ...msg }]);
   }
 
-  function applyPayload(s?: SheetData, ch?: ChartData[], af?: AgentFile[]) {
-    if (s) {
-      setSheet(s);
-      const f: AgentFile = { id: uid(), name: s.title ?? "Generated sheet",
-                              kind: "sheet", createdAt: new Date().toISOString() };
-      setFiles((p) => [f, ...p]);
-      setActiveFileId(f.id);
-    }
-    if (ch?.length) {
-      setCharts(ch);
-      setFiles((p) => [...ch.map((c) => ({
-        id: c.id, name: c.title, kind: "chart" as const,
-        createdAt: new Date().toISOString(),
-      })), ...p]);
-    }
-    if (af?.length) setFiles((p) => [...af, ...p]);
-  }
-
-  // ── Backend call ───────────────────────────────────────────────────────────
+  // ── Backend call ─────────────────────────────────────────────────────────
   async function callBackend(text: string) {
     setStatus("loading");
     try {
@@ -204,6 +189,7 @@ function SheetAgentPage() {
           seenFilenames.current.add(extra.filename);
         addMsg({ role: "assistant", text: res.text, ...extra });
       }
+      refreshChatHistory();
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
       if (e?.name === "AbortError") return;
@@ -215,9 +201,9 @@ function SheetAgentPage() {
           text: `I found **${localSheet.rows.length} rows**.\nWhat would you like me to build?`,
           trigger: "clarify",
           options: [
-            { id: "basic",          label: "📋 Basic Sheet"                        },
-            { id: "with_chart",     label: "📊 + Bar Chart"                        },
-            { id: "with_dashboard", label: "📈 + Dashboard"                        },
+            { id: "basic",          label: "📋 Basic Sheet" },
+            { id: "with_chart",     label: "📊 + Bar Chart" },
+            { id: "with_dashboard", label: "📈 + Dashboard" },
             { id: "full",           label: "🎯 Full (Recommended)", recommended: true },
           ],
         });
@@ -230,18 +216,11 @@ function SheetAgentPage() {
     }
   }
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleSend = (text: string) => {
-    addMsg({ role: "user", text });
-    callBackend(text);
-  };
-
+  const handleSend = (text: string, attachedFileName?: string) => { addMsg({ role: "user", text, attachedFileName }); callBackend(text); };
   const handleStop = () => {
-    abortCurrentRequest();
-    setStatus("idle");
+    abortCurrentRequest(); setStatus("idle");
     addMsg({ role: "assistant", text: "⏹ Stopped. Send a new message whenever you're ready." });
   };
-
   const handleUpload = async (file: File) => {
     toast.info(`Uploading ${file.name}…`);
     try {
@@ -252,12 +231,10 @@ function SheetAgentPage() {
       toast.success(`${file.name} ready — tell me what to do with it`);
       return res;
     } catch (err: unknown) {
-      const e = err as { message?: string };
-      toast.error(`Upload failed: ${e?.message ?? "unknown error"}`);
+      toast.error(`Upload failed: ${(err as { message?: string })?.message ?? "unknown"}`);
       throw err;
     }
   };
-
   const handleDownload = async (filename: string) => {
     try {
       const blob = await downloadExcel(filename);
@@ -265,18 +242,15 @@ function SheetAgentPage() {
       const a    = document.createElement("a");
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a); URL.revokeObjectURL(url);
     } catch (err: unknown) {
-      const e = err as { message?: string };
-      toast.error(`Download failed: ${e?.message ?? "unknown error"}`);
+      toast.error(`Download failed: ${(err as { message?: string })?.message ?? "unknown"}`);
     }
   };
-
   const handlePickOption = async (opt: ClarifyOption) => {
     addMsg({ role: "user", text: opt.label });
     try {
-      const res = await sendMessage(`__choice:${opt.id}`, sessionIdRef.current, null);
+      const res  = await sendMessage(`__choice:${opt.id}`, sessionIdRef.current, null);
       const extra = actionToMessageFields(res.action);
       addMsg({ role: "assistant", text: res.text, ...extra });
     } catch {
@@ -286,9 +260,7 @@ function SheetAgentPage() {
 
   const hasArtifacts = useMemo(() => sheet !== null || charts.length > 0, [sheet, charts]);
 
-  // ── Render gates ───────────────────────────────────────────────────────────
-
-  // Loading token verification
+  // ── Render gates ─────────────────────────────────────────────────────────
   if (authChecking) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -300,7 +272,6 @@ function SheetAgentPage() {
     );
   }
 
-  // Not logged in → auth page
   if (!user) {
     return (
       <>
@@ -310,32 +281,41 @@ function SheetAgentPage() {
     );
   }
 
-  // First name for greeting
-  const firstName = user.full_name?.split(" ")[0] ?? "there";
+  const firstName  = user.full_name?.split(" ")[0] ?? "there";
   const showWelcome = messages.length === 0;
 
-  // ── Main app ───────────────────────────────────────────────────────────────
+  // ── Main app ──────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
       <Toaster richColors position="top-center" />
 
-      {/* Top header bar */}
-      <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-card/80 px-4 backdrop-blur">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card/80 px-3 backdrop-blur sm:px-4">
         <div className="flex items-center gap-2">
+          {/* Hamburger — visible on mobile/tablet when sidebar closed */}
+          <button
+            onClick={() => setSidebarOpen((o) => !o)}
+            aria-label="Toggle sidebar"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground lg:hidden"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
           <span className="text-sm font-semibold text-foreground">SheetAgent AI</span>
-          <span className="hidden text-xs text-muted-foreground sm:inline">
+          <span className="hidden text-xs text-muted-foreground md:inline">
             — {greeting}, {firstName}
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+
+        <div className="flex items-center gap-1 sm:gap-3">
+          <div className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex">
             <UserIcon className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{user.email}</span>
+            <span className="hidden md:inline">{user.email}</span>
           </div>
           <button
             onClick={handleLogout}
             title="Sign out"
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors sm:px-2.5"
           >
             <LogOut className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Sign out</span>
@@ -343,8 +323,10 @@ function SheetAgentPage() {
         </div>
       </header>
 
-      {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* ── Body ───────────────────────────────────────────────────────── */}
+      <div className="relative flex flex-1 overflow-hidden">
+
+        {/* Sidebar */}
         <LeftSidebar
           files={files}
           recentChats={recentChats}
@@ -352,18 +334,25 @@ function SheetAgentPage() {
           activeChatId={activeChatId}
           onSelect={setActiveFileId}
           onSelectChat={handleSelectChat}
+          onDeleteChat={handleDeleteChat}
           onNewChat={handleNewChat}
           open={sidebarOpen}
           onToggle={() => setSidebarOpen((o) => !o)}
         />
 
-        <section className={hasArtifacts
-          ? "flex w-[440px] flex-col border-r border-border"
-          : "flex flex-1 flex-col"}>
+        {/* Chat panel — fills all remaining space */}
+        <section className={cn(
+          "flex min-w-0 flex-1 flex-col",
+          // On desktop with artifacts: fixed width chat + artifact panel
+          hasArtifacts && "lg:max-w-[480px]",
+        )}>
           <ChatPanel
-            messages={messages} status={status}
-            onSend={handleSend} onStop={handleStop}
-            onUpload={handleUpload} onDownload={handleDownload}
+            messages={messages}
+            status={status}
+            onSend={handleSend}
+            onStop={handleStop}
+            onUpload={handleUpload}
+            onDownload={handleDownload}
             onPickOption={handlePickOption}
             showWelcome={showWelcome}
             welcomeSlot={
@@ -376,8 +365,9 @@ function SheetAgentPage() {
           />
         </section>
 
+        {/* Artifacts panel — only shows on ≥1024px when there's content */}
         {hasArtifacts && (
-          <section className="flex-1 overflow-y-auto bg-muted/20 p-6">
+          <section className="hidden flex-1 overflow-y-auto bg-muted/20 p-4 lg:block lg:p-6">
             <div className="mx-auto max-w-5xl space-y-6">
               {sheet  && <SheetView  sheet={sheet} />}
               {charts.map((c) => <ChartView key={c.id} chart={c} />)}
@@ -387,4 +377,9 @@ function SheetAgentPage() {
       </div>
     </div>
   );
+}
+
+// ── tiny cn helper so we can use cn() inline above without extra import ──
+function cn(...classes: (string | false | undefined)[]) {
+  return classes.filter(Boolean).join(" ");
 }

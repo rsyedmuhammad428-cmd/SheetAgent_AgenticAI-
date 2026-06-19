@@ -1005,15 +1005,21 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
     if not real_data: return
     headers_lower = [str(h).lower() for h in headers]
     
-    finance_cols = [h for h in headers_lower if "revenue" in h or "profit" in h or "sales" in h or "margin" in h or "salary" in h or "cost" in h]
+    finance_cols = [h for h in headers_lower if "revenue" in h or "profit" in h or "sales" in h or "margin" in h or "cost" in h]
     performance_cols = [h for h in headers_lower if "score" in h or "mark" in h or "rating" in h or "grade" in h or "gpa" in h]
     
     is_financial = len(finance_cols) > 0
     is_performance = len(performance_cols) > 0 and not is_financial
     
     if not is_financial and not is_performance:
+        _id_like_words  = {"id", "no", "ref", "code", "num", "number", "reference"}
+        _id_like_substr = ("serial", "uuid", "zipcode", "phone")
         numeric_cols = []
         for h in headers:
+            h_lower = str(h).strip().lower()
+            words = re.split(r"[^a-z0-9]+", h_lower)
+            if any(w in _id_like_words for w in words if w) or any(s in h_lower for s in _id_like_substr):
+                continue
             for row in real_data[:5]:
                 val = row.get(h)
                 if isinstance(val, (int, float)):
@@ -1022,6 +1028,15 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
                 elif str(val).replace(",", "").replace(".", "").replace("%", "").replace("$", "").strip().replace("-", "", 1).isdigit():
                     numeric_cols.append(h)
                     break
+        if not numeric_cols:
+            # Fall back to including ID-like columns rather than showing nothing,
+            # in case EVERY numeric column happened to look ID-like.
+            for h in headers:
+                for row in real_data[:5]:
+                    val = row.get(h)
+                    if isinstance(val, (int, float)):
+                        numeric_cols.append(h)
+                        break
         if not numeric_cols:
             return # No numeric columns to summarize
         is_general = True
@@ -1060,6 +1075,35 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
 def _render_financial_dashboard(ws, real_data, headers, headers_lower, theme, brd, name_key):
     rev_key = next((h for h in headers if "revenue" in str(h).lower() or "sales" in str(h).lower()), None)
     prof_key = next((h for h in headers if "profit" in str(h).lower() and "margin" not in str(h).lower()), None)
+
+    # Safety net: "is_financial" is detected from a broader keyword set
+    # (revenue/profit/sales/margin/cost) than what this function actually
+    # needs (revenue/sales OR profit specifically). If neither resolves —
+    # e.g. the only match was "cost" or "margin" alone — building this P&L
+    # table would silently produce an all-zero, meaningless dashboard.
+    # Fall back to the generic numeric dashboard instead.
+    if not rev_key and not prof_key:
+        _id_like_words  = {"id", "no", "ref", "code", "num", "number", "reference"}
+        _id_like_substr = ("serial", "uuid", "zipcode", "phone")
+        numeric_cols = []
+        for h in headers:
+            if h == name_key:
+                continue
+            h_lower = str(h).strip().lower()
+            words = re.split(r"[^a-z0-9]+", h_lower)
+            if any(w in _id_like_words for w in words if w) or any(s in h_lower for s in _id_like_substr):
+                continue
+            for row in real_data[:5]:
+                val = row.get(h)
+                if isinstance(val, (int, float)):
+                    numeric_cols.append(h)
+                    break
+        if numeric_cols:
+            _render_general_dashboard(ws, real_data, headers, numeric_cols, theme, brd, name_key)
+            return
+        # No usable numeric column at all — nothing meaningful to show.
+        ws.cell(4, 1, "No numeric columns found to analyze.").font = Font(italic=True, color=theme["sub_color"])
+        return
     
     total_rev = 0
     total_prof = 0

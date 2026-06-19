@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, DateTime, JSON, text, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, Text, text, ForeignKey
 from datetime import datetime, timezone
 import logging
 
@@ -58,6 +58,23 @@ class ChatSession(Base):
     message_count = Column(String, default="0")
     created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class ChatMessageRecord(Base):
+    """
+    Individual messages within a chat session. Without this table, only
+    session metadata (title/count) could be saved — the actual message
+    text/role/action had nowhere to live, so loading a past chat had
+    nothing to show.
+    """
+    __tablename__ = "chat_messages"
+
+    id          = Column(String, primary_key=True)
+    session_id  = Column(String, nullable=False, index=True)
+    role        = Column(String(20), nullable=False)   # "user" | "assistant"
+    text        = Column(Text, nullable=False)
+    action_json = Column(JSON, nullable=True)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 async def init_db():

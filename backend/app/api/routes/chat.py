@@ -188,6 +188,50 @@ async def get_chat_history(
         raise HTTPException(500, f"Failed to fetch history: {str(e)}")
 
 
+@router.delete("/history/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
+):
+    """Delete a chat session and all its messages — owner only."""
+    if not creds:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+
+    user_id = _get_user_id_from_creds(creds)
+    if not user_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    try:
+        from app.models.database import ChatSession, ChatMessageRecord, AsyncSessionLocal
+        from sqlalchemy import delete as sa_delete
+        async with AsyncSessionLocal() as db:
+            sess_result = await db.execute(
+                select(ChatSession).where(ChatSession.id == session_id)
+            )
+            session = sess_result.scalar_one_or_none()
+            if not session:
+                raise HTTPException(404, "Chat session not found")
+            if session.user_id != user_id:
+                raise HTTPException(403, "Not authorized to delete this session")
+
+            await db.execute(
+                sa_delete(ChatMessageRecord).where(
+                    ChatMessageRecord.session_id == session_id
+                )
+            )
+            await db.execute(
+                sa_delete(ChatSession).where(ChatSession.id == session_id)
+            )
+            await db.commit()
+            logger.info(f"[ChatHistory] Deleted session {session_id}")
+            return {"message": "Session deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete session: {e}")
+        raise HTTPException(500, f"Failed to delete session: {str(e)}")
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "route": "chat", "phase": 6}

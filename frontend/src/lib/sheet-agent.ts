@@ -75,6 +75,8 @@ export interface ChatMessage {
   files?: AgentFile[];
   filename?: string;
   fileTitle?: string;
+  /** File name shown as a chip in the user's message bubble */
+  attachedFileName?: string;
 }
 
 interface BackendChatResponse {
@@ -152,7 +154,6 @@ export async function fetchChatHistory(token?: string): Promise<ChatSession[]> {
   
   if (!res.ok) {
     if (res.status === 401) {
-      // Not authenticated, return empty list
       return [];
     }
     const err = await res.json().catch(() => ({}));
@@ -160,6 +161,50 @@ export async function fetchChatHistory(token?: string): Promise<ChatSession[]> {
   }
   
   return res.json() as Promise<ChatSession[]>;
+}
+
+export interface StoredMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  action: ChatAction;
+  created_at: string;
+}
+
+export async function fetchChatMessages(
+  sessionId: string,
+  token?: string,
+): Promise<StoredMessage[]> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}/api/chat/history/${sessionId}`, {
+    method: "GET",
+    headers,
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) return [];
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || `Failed to fetch messages: ${res.status}`);
+  }
+  return res.json() as Promise<StoredMessage[]>;
+}
+
+export async function deleteChatSession(
+  sessionId: string,
+  token?: string,
+): Promise<void> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/chat/history/${sessionId}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || `Delete failed: ${res.status}`);
+  }
 }
 
 // ── File upload ───────────────────────────────────────────────────────────────

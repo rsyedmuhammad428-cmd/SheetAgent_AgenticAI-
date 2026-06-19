@@ -56,7 +56,16 @@ class LLMFailoverController:
             return ""
 
     def _should_retry(self, status_code: int) -> bool:
-        return status_code == 429 or status_code >= 500
+        """
+        Return True when the error is worth retrying on the other provider.
+
+        429 = rate-limited    → try other provider
+        403 = forbidden       → Gemini key lacks access to this model (e.g.
+                                 gemini-2.5-flash requires billing). Failover
+                                 to OpenRouter instead of giving up immediately.
+        5xx = server error    → transient, try other provider
+        """
+        return status_code in (403, 429) or status_code >= 500
 
     async def generate(self, prompt: str) -> Dict[str, Any]:
         """
