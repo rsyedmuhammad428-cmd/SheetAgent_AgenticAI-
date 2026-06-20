@@ -10,11 +10,13 @@ lerna-debug.log*
 # Environment files
 .env
 .env.*
+!.env.example
 
 node_modules
 dist
 dist-ssr
 .output
+.vercel
 .vinxi
 .tanstack/**
 .nitro

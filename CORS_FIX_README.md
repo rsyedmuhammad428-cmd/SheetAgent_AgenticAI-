@@ -30,7 +30,7 @@ AFTER (fixed):
 frontend/src/api/client.ts                    ← Removes hardcoded localhost:8000
 frontend/src/hooks/useWebSocket.ts            ← Uses window.location.host for WS URL
 frontend/src/components/layout/ChatPanel.tsx  ← Uses relative API calls
-frontend/.env                                 ← Clears any VITE_API_URL value
+frontend/.env                                 ← Clears any VITE_API_BASE_URL value
 frontend/vite.config.ts                       ← Adds dev proxy
 nginx/nginx.conf                              ← Adds CORS headers + OPTIONS handler
 backend/app/main.py                           ← Sets allow_origins=["*"]

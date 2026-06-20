@@ -11,8 +11,9 @@
  *   GET  /api/download/excel/:filename — streams .xlsx
  *   WS   /ws/:session_id               — live log + excel_ready events
  */
+import { API_BASE, buildApiUrl, buildWebSocketUrl } from "./runtime-config";
 
-export const API_BASE = "";
+export { API_BASE };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,7 +122,7 @@ export async function sendMessage(
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch(`${API_BASE}/api/chat/`, {
+  const res = await fetch(buildApiUrl("/api/chat/"), {
     method: "POST",
     headers,
     signal: _currentAbort.signal,
@@ -147,7 +148,7 @@ export async function fetchChatHistory(token?: string): Promise<ChatSession[]> {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch(`${API_BASE}/api/chat/history`, {
+  const res = await fetch(buildApiUrl("/api/chat/history"), {
     method: "GET",
     headers,
   });
@@ -178,7 +179,7 @@ export async function fetchChatMessages(
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}/api/chat/history/${sessionId}`, {
+  const res = await fetch(buildApiUrl(`/api/chat/history/${sessionId}`), {
     method: "GET",
     headers,
   });
@@ -197,7 +198,7 @@ export async function deleteChatSession(
 ): Promise<void> {
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}/api/chat/history/${sessionId}`, {
+  const res = await fetch(buildApiUrl(`/api/chat/history/${sessionId}`), {
     method: "DELETE",
     headers,
   });
@@ -212,7 +213,7 @@ export async function deleteChatSession(
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/upload/`, {
+  const res = await fetch(buildApiUrl("/api/upload/"), {
     method: "POST",
     body: form,
   });
@@ -226,7 +227,7 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
 // ── Excel download ────────────────────────────────────────────────────────────
 
 export async function downloadExcel(filename: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}/api/download/excel/${filename}`);
+  const res = await fetch(buildApiUrl(`/api/download/excel/${filename}`));
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   return res.blob();
 }
@@ -252,9 +253,7 @@ export function connectWebSocket(sessionId: string, onEvent: WsCallback) {
     _wsSocket = null;
   }
   _wsCallback = onEvent;
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const host  = window.location.host;
-  const ws    = new WebSocket(`${proto}://${host}/ws/${sessionId}`);
+  const ws = new WebSocket(buildWebSocketUrl(`/ws/${sessionId}`));
 
   ws.onmessage = (e) => {
     if (e.data === "pong") return;

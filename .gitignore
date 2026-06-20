@@ -28,6 +28,9 @@ ENV/
 # Environment files (all .env variants)
 .env
 .env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example
 
 # Database files
 *.db

@@ -9,7 +9,9 @@
  *   POST /api/auth/logout     → { message }
  */
 
-export const API_BASE = "";
+import { API_BASE, buildApiUrl } from "./runtime-config";
+
+export { API_BASE };
 
 export interface User {
   id: string;
@@ -78,7 +80,7 @@ export function authHeaders(): Record<string, string> {
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 async function authFetch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(buildApiUrl(path), {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify(body),
@@ -119,7 +121,7 @@ export async function login(
 export async function logout(): Promise<void> {
   const token = getToken();
   if (token) {
-    await fetch(`${API_BASE}/api/auth/logout`, {
+    await fetch(buildApiUrl("/api/auth/logout"), {
       method:  "POST",
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
@@ -128,7 +130,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function getMe(): Promise<User> {
-  const res = await fetch(`${API_BASE}/api/auth/me`, {
+  const res = await fetch(buildApiUrl("/api/auth/me"), {
     headers: { ...authHeaders() },
   });
   if (!res.ok) throw new Error("Not authenticated");
