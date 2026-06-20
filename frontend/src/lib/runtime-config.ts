@@ -1,8 +1,10 @@
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 
-const publicApiBase = trimTrailingSlash(
-  (import.meta.env.VITE_API_BASE_URL ?? "").trim(),
-);
+const DEFAULT_API_BASE = "https://razazaidi-sheetagent.hf.space";
+
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+
+const publicApiBase = trimTrailingSlash(configuredApiBase || DEFAULT_API_BASE);
 
 export const API_BASE = publicApiBase;
 
