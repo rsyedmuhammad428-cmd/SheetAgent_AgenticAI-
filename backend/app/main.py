@@ -69,8 +69,8 @@ app = FastAPI(
 # This allows direct API calls during development without nginx.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,   # must be False when allow_origins=["*"]
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID", "X-Response-Time", "Content-Disposition"],

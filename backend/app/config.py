@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     secret_key: str = "dev-secret-change-in-production"
     access_token_expire_minutes: int = 1440
+    cors_origins: list[str] = ["*"]
 
     workspace_path: Path = Path("/app/workspace")
     log_level: str = "INFO"

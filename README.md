@@ -1,3 +1,9 @@
+---
+title: SheetAgent
+sdk: docker
+app_port: 7860
+---
+
 # SheetAgent AI - Intelligent Data Operating System
 
 ## Project Description

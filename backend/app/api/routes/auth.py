@@ -45,10 +45,10 @@ def _get_jwt():
 # ── Config ────────────────────────────────────────────────────────────────────
 def _cfg():
     from app.config import settings
-    secret  = getattr(settings, "auth_secret", "sheetagent-super-secret-change-me")
-    expire  = int(getattr(settings, "token_expire_hours", 72))
-    db_url  = getattr(settings, "database_url", "sqlite+aiosqlite:///./sheetagent.db")
-    return secret, expire, db_url
+    secret = settings.secret_key
+    expire_minutes = int(settings.access_token_expire_minutes)
+    db_url = settings.database_url
+    return secret, expire_minutes, db_url
 
 # ── DB model ──────────────────────────────────────────────────────────────────
 def _get_base_and_engine():
@@ -89,11 +89,11 @@ async def _get_db() -> AsyncSession:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _make_token(user_id: str, email: str) -> str:
     jwt      = _get_jwt()
-    secret, expire, _ = _cfg()
+    secret, expire_minutes, _ = _cfg()
     payload  = {
         "sub": user_id,
         "email": email,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=expire),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
