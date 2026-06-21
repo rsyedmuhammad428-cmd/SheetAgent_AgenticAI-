@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import uuid
 
@@ -48,7 +48,8 @@ async def _persist_chat_history(
 ) -> None:
     from app.models.database import ChatMessageRecord, ChatSession, AsyncSessionLocal
 
-    now = datetime.now(timezone.utc)
+    now_user = datetime.now(timezone.utc)
+    now_assistant = now_user + timedelta(milliseconds=1)
 
     async with AsyncSessionLocal() as db:
         session_result = await db.execute(
@@ -62,8 +63,8 @@ async def _persist_chat_history(
                 user_id=user_id,
                 title=user_message[:100] if user_message else "New Chat",
                 message_count="0",
-                created_at=now,
-                updated_at=now,
+                created_at=now_user,
+                updated_at=now_assistant,
             )
             db.add(chat_session)
         elif chat_session.user_id != user_id:
@@ -81,7 +82,7 @@ async def _persist_chat_history(
                 role="user",
                 text=user_message,
                 action_json=user_action or {},
-                created_at=now,
+                created_at=now_user,
             )
         )
         db.add(
@@ -91,7 +92,7 @@ async def _persist_chat_history(
                 role="assistant",
                 text=assistant_text,
                 action_json=assistant_action or {},
-                created_at=now,
+                created_at=now_assistant,
             )
         )
 
@@ -104,7 +105,7 @@ async def _persist_chat_history(
         )
         total_messages = count_result.scalar_one()
         chat_session.message_count = str(total_messages)
-        chat_session.updated_at = now
+        chat_session.updated_at = now_assistant
         await db.commit()
 
 
