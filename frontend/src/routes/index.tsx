@@ -87,6 +87,18 @@ function SheetAgentPage() {
   const uploadedPathRef = useRef<string | null>(null);
   const seenFilenames   = useRef<Set<string>>(new Set());
 
+  function resetConversationView() {
+    disconnectWebSocket();
+    sessionIdRef.current = null;
+    uploadedPathRef.current = null;
+    seenFilenames.current.clear();
+    setMessages([]);
+    setSheet(null);
+    setCharts([]);
+    setFiles([]);
+    setActiveFileId(undefined);
+  }
+
   // ── Pakistan-time greeting (updates every minute) ─────────────────────
   const [greeting, setGreeting] = useState("Good morning");
   useEffect(() => {
@@ -107,26 +119,23 @@ function SheetAgentPage() {
 
   // ── Chat helpers ────────────────────────────────────────────────────────
   const handleNewChat = () => {
-    disconnectWebSocket();
-    sessionIdRef.current    = null;
-    uploadedPathRef.current = null;
-    seenFilenames.current.clear();
-    setMessages([]);
-    setSheet(null);
-    setCharts([]);
-    setFiles([]);
-    setActiveFileId(undefined);
+    resetConversationView();
     setActiveChatId(null);
   };
 
   const handleSelectChat = async (chatId: string) => {
-    handleNewChat();            // clears first
-    setActiveChatId(chatId);   // then sets (stays set)
+    resetConversationView();
+    setActiveChatId(chatId);
     sessionIdRef.current = chatId;
     try {
       const stored = await fetchChatMessages(chatId, getToken() ?? undefined);
       setMessages(stored.map((m) => ({
-        id: m.id, role: m.role, text: m.text,
+        id: m.id,
+        role: m.role,
+        text: m.text,
+        attachedFileName: typeof m.action?.attached_file_name === "string"
+          ? m.action.attached_file_name
+          : undefined,
         ...actionToMessageFields(m.action || {}),
       })));
       setupWs(chatId);
@@ -171,13 +180,21 @@ function SheetAgentPage() {
   }
 
   // ── Backend call ─────────────────────────────────────────────────────────
-  async function callBackend(text: string) {
+  async function callBackend(text: string, attachedFileName?: string) {
     setStatus("loading");
     try {
-      const res = await sendMessage(text, sessionIdRef.current, uploadedPathRef.current);
+      const res = await sendMessage(
+        text,
+        sessionIdRef.current,
+        uploadedPathRef.current,
+        attachedFileName,
+      );
       if (res.session_id && res.session_id !== sessionIdRef.current) {
         sessionIdRef.current = res.session_id;
+        setActiveChatId(res.session_id);
         setupWs(res.session_id);
+      } else if (res.session_id) {
+        setActiveChatId(res.session_id);
       }
       uploadedPathRef.current = null;
       const extra = actionToMessageFields(res.action);
@@ -216,7 +233,10 @@ function SheetAgentPage() {
     }
   }
 
-  const handleSend = (text: string, attachedFileName?: string) => { addMsg({ role: "user", text, attachedFileName }); callBackend(text); };
+  const handleSend = (text: string, attachedFileName?: string) => {
+    addMsg({ role: "user", text, attachedFileName });
+    callBackend(text, attachedFileName);
+  };
   const handleStop = () => {
     abortCurrentRequest(); setStatus("idle");
     addMsg({ role: "assistant", text: "⏹ Stopped. Send a new message whenever you're ready." });
@@ -225,9 +245,7 @@ function SheetAgentPage() {
     toast.info(`Uploading ${file.name}…`);
     try {
       const res = await uploadFile(file);
-      sessionIdRef.current    = res.session_id;
       uploadedPathRef.current = res.file_path;
-      setupWs(res.session_id);
       toast.success(`${file.name} ready — tell me what to do with it`);
       return res;
     } catch (err: unknown) {
@@ -347,6 +365,7 @@ function SheetAgentPage() {
           hasArtifacts && "lg:max-w-[480px]",
         )}>
           <ChatPanel
+            key={activeChatId ?? "new-chat"}
             messages={messages}
             status={status}
             onSend={handleSend}

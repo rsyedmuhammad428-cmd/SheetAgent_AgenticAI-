@@ -43,6 +43,7 @@ async def _persist_chat_history(
     session_id: str,
     user_message: str,
     assistant_text: str,
+    user_action: Optional[dict[str, Any]] = None,
     assistant_action: Optional[dict[str, Any]] = None,
 ) -> None:
     from app.models.database import ChatMessageRecord, ChatSession, AsyncSessionLocal
@@ -79,7 +80,7 @@ async def _persist_chat_history(
                 session_id=session_id,
                 role="user",
                 text=user_message,
-                action_json={},
+                action_json=user_action or {},
                 created_at=now,
             )
         )
@@ -111,6 +112,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
     uploaded_file_path: Optional[str] = None
+    attached_file_name: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -190,6 +192,9 @@ async def chat(
                     session_id=new_session_id,
                     user_message=body.message,
                     assistant_text=response.text,
+                    user_action={
+                        "attached_file_name": body.attached_file_name
+                    } if body.attached_file_name else {},
                     assistant_action=response.action,
                 )
             except Exception as e:

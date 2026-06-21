@@ -63,6 +63,7 @@ export interface ChatAction {
   download_url?: string;
   waiting_for?: string;
   options?: ClarifyOption[];
+  attached_file_name?: string;
 }
 
 export interface ChatMessage {
@@ -110,6 +111,7 @@ export async function sendMessage(
   message: string,
   sessionId?: string | null,
   uploadedFilePath?: string | null,
+  attachedFileName?: string | null,
 ): Promise<BackendChatResponse> {
   _currentAbort = new AbortController();
   
@@ -130,6 +132,7 @@ export async function sendMessage(
       message,
       session_id: sessionId ?? null,
       uploaded_file_path: uploadedFilePath ?? null,
+      attached_file_name: attachedFileName ?? null,
     }),
   });
   _currentAbort = null;
