@@ -105,6 +105,12 @@ class LLMFailoverController:
                 "code_a": None,
                 "code_b": None,
             }
+
+        logger.info(
+            "LLM failover start | gemini_enabled=%s | openrouter_enabled=%s",
+            gemini_enabled,
+            openrouter_enabled,
+        )
         
         async with httpx.AsyncClient() as client:
             # --- Attempt 1: Provider A (Gemini) ---
@@ -113,6 +119,7 @@ class LLMFailoverController:
                 try:
                     resp_a1 = await self._call_gemini(prompt, client)
                     last_codes.append(resp_a1.status_code)
+                    logger.info("LLM attempt 1 Gemini status=%s", resp_a1.status_code)
 
                     if not self._should_retry(resp_a1.status_code):
                         resp_a1.raise_for_status()
@@ -126,6 +133,7 @@ class LLMFailoverController:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 0:
                         last_codes.append(status)
+                    logger.warning("LLM attempt 1 Gemini failed status=%s", status)
                     if not self._should_retry(status) and not openrouter_enabled:
                         code_a = last_codes[0] if len(last_codes) > 0 else None
                         return {
@@ -145,6 +153,7 @@ class LLMFailoverController:
                 try:
                     resp_b = await self._call_openrouter(prompt, client)
                     last_codes.append(resp_b.status_code)
+                    logger.info("LLM attempt 2 OpenRouter status=%s", resp_b.status_code)
 
                     if not self._should_retry(resp_b.status_code):
                         resp_b.raise_for_status()
@@ -158,6 +167,7 @@ class LLMFailoverController:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 1:
                         last_codes.append(status)
+                    logger.warning("LLM attempt 2 OpenRouter failed status=%s", status)
                     if not self._should_retry(status):
                         code_a = last_codes[0] if len(last_codes) > 0 else None
                         code_b = last_codes[1] if len(last_codes) > 1 else None
@@ -179,6 +189,7 @@ class LLMFailoverController:
                 try:
                     resp_a2 = await self._call_gemini(prompt, client)
                     last_codes.append(resp_a2.status_code)
+                    logger.info("LLM attempt 3 Gemini status=%s", resp_a2.status_code)
 
                     if not self._should_retry(resp_a2.status_code):
                         resp_a2.raise_for_status()
@@ -192,6 +203,7 @@ class LLMFailoverController:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 2:
                         last_codes.append(status)
+                    logger.warning("LLM attempt 3 Gemini failed status=%s", status)
                 
             # If all 3 attempts fail or we get 429/5xx on the 3rd attempt, return standardized JSON error
             code_a = last_codes[0] if len(last_codes) > 0 else None
