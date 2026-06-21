@@ -239,7 +239,7 @@ export function ChatPanel({
       />
 
       {/* Messages scroll area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-auto scroll-smooth">
         {showWelcome && welcomeSlot}
         <div className="mx-auto max-w-3xl space-y-3 px-3 py-4 sm:space-y-4 sm:px-4 sm:py-6">
           {messages.map((m) => (
