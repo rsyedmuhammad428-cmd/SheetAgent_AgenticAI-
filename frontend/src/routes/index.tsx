@@ -281,7 +281,7 @@ function SheetAgentPage() {
   // ── Render gates ─────────────────────────────────────────────────────────
   if (authChecking) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-[100dvh] items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-muted-foreground">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <span className="text-sm">Signing you in…</span>
@@ -304,7 +304,7 @@ function SheetAgentPage() {
 
   // ── Main app ──────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
+    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-background">
       <Toaster richColors position="top-center" />
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
