@@ -336,7 +336,7 @@ async def _gemini_extract_data_from_text(text: str) -> list[dict]:
     Ask Gemini to extract structured rows from raw text.
     CRITICAL: quota errors are re-raised — they must NOT be swallowed here.
     """
-    from app.agents.quota_helper   import is_quota_error
+    from app.agents.quota_helper   import is_quota_error, is_provider_error
     from app.services.gemini_service import gemini_service
 
     prompt = (
@@ -360,7 +360,7 @@ async def _gemini_extract_data_from_text(text: str) -> list[dict]:
             return result
         return []
     except Exception as e:
-        if is_quota_error(e):
+        if is_quota_error(e) or is_provider_error(e):
             raise   # ← CRITICAL: re-raise quota errors, never swallow them
         logger.warning(f"[SheetAgent] Gemini text extraction failed (non-quota): {e}")
         return []

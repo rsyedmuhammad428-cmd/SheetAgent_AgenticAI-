@@ -33,6 +33,23 @@ def is_quota_error(e: Exception) -> bool:
     ])
 
 
+def is_provider_error(e: Exception) -> bool:
+    """Return True for upstream LLM/provider failures that should not degrade to fake/sample output."""
+    msg = str(e).lower()
+    return any(k in msg for k in [
+        "all providers exhausted",
+        "provider is configured",
+        "gemini client error",
+        "openrouter client error",
+        "openrouter returned",
+        "failover error",
+        "json extraction failed after",
+        "404 not found",
+        "401 unauthorized",
+        "403 forbidden",
+    ])
+
+
 def get_quota_reset_message(e: Optional[Exception] = None) -> str:
     """
     Returns a professional message with:

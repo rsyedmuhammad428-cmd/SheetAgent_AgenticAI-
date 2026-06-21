@@ -94,8 +94,8 @@ Return a JSON task description:
                 logger.info(f"[Phase7] Task understood: {result.get('user_intent_summary','')[:80]}")
                 return result
         except Exception as e:
-            from app.agents.quota_helper import is_quota_error
-            if is_quota_error(e): raise
+            from app.agents.quota_helper import is_quota_error, is_provider_error
+            if is_quota_error(e) or is_provider_error(e): raise
             logger.error(f"[Phase7] Task understanding failed: {e}")
 
         return {
@@ -207,8 +207,8 @@ Return ONLY valid JSON (start with {{, no markdown):
                 return result
             logger.warning(f"[Phase7] Invalid design from Gemini: {str(result)[:200]}")
         except Exception as e:
-            from app.agents.quota_helper import is_quota_error
-            if is_quota_error(e): raise
+            from app.agents.quota_helper import is_quota_error, is_provider_error
+            if is_quota_error(e) or is_provider_error(e): raise
             logger.error(f"[Phase7] Workbook design failed: {e}")
 
         return await self._generate_domain_design(task, extracted_columns, extracted_data)
@@ -457,8 +457,8 @@ Use domain-specific column names. Return ONLY JSON starting with {{"""
             if isinstance(result, dict) and result.get("sheets"):
                 return result
         except Exception as e:
-            from app.agents.quota_helper import is_quota_error
-            if is_quota_error(e): raise
+            from app.agents.quota_helper import is_quota_error, is_provider_error
+            if is_quota_error(e) or is_provider_error(e): raise
             logger.error(f"[Phase7] Domain design also failed: {e}")
 
         return self._build_from_actual_columns(
