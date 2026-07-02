@@ -239,15 +239,23 @@ SAMPLE = {
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def generate_excel(design: dict, session_id: str, real_data: list | str | None = None) -> Path:
+async def generate_excel(
+    design: dict,
+    session_id: str,
+    real_data: list | str | None = None,
+    theme: dict | None = None,
+    graph_type: str | None = None,
+) -> Path:
     """
     Generate a professional Excel file.
 
     Phase 7 change: if real_data is provided, the first data sheet is written
     directly from real_data using the ACTUAL column keys — no column-name
     matching check that can fail.
+
+    HITL additions: theme and graph_type override Gemini defaults when provided.
     """
-    # ── Real Data Pre-parsing Engine ─────────────────────────────────────────
+    # ── Real Data Pre-parsing Engine ────────────────────────────────────────────────────────
     # Safely convert raw text-based JSON/markdown strings into standard structured arrays
     if isinstance(real_data, str):
         real_data_str = real_data.strip()
@@ -257,25 +265,58 @@ async def generate_excel(design: dict, session_id: str, real_data: list | str | 
         except Exception:
             pass
 
-    # ── Sanitize Gemini output FIRST — prevents type errors downstream ────────
+    # ── Sanitize Gemini output FIRST — prevents type errors downstream ────────────
     design = _sanitize_design(design)
 
     wb = Workbook()
     wb.remove(wb.active)
 
-    theme_name = design.get("color_theme", "professional")
-    theme      = THEMES.get(theme_name, THEMES["professional"])
+    # ── Apply HITL user-selected theme (overrides Gemini's choice) ─────────────
+    if theme and isinstance(theme, dict):
+        # Convert #RRGGBB to RRGGBB (strip leading #)
+        def _hex(c: str) -> str:
+            return c.lstrip("#").upper()
+
+        header_bg  = _hex(theme.get("header",      "#1F4E79"))
+        header_fg  = _hex(theme.get("header_font", "#FFFFFF"))
+        alt_row    = _hex(theme.get("row_alt",     "#EBF3FB"))
+        row_base   = _hex(theme.get("row_base",    "#FFFFFF"))
+
+        selected_theme = {
+            "header_bg":    header_bg,
+            "header_fg":    header_fg,
+            "alt_row":      alt_row,
+            "border":       header_bg,
+            "total_bg":     header_bg,
+            "total_fg":     header_fg,
+            "title_color":  header_bg,
+            "sub_color":    "555555",
+            "accent":       header_bg,
+        }
+        logger.info(f"[HITL] Applying user theme: header={header_bg} alt_row={alt_row}")
+    else:
+        theme_name    = design.get("color_theme", "professional")
+        selected_theme = THEMES.get(theme_name, THEMES["professional"])
+
+    # ── Override chart type if user selected via HITL ──────────────────────────
+    if graph_type and design.get("charts"):
+        valid_types = {"bar": "bar", "pie": "pie", "line": "line"}
+        mapped = valid_types.get(graph_type)
+        if mapped:
+            for chart in design["charts"]:
+                chart["chart_type"] = mapped
+            logger.info(f"[HITL] Overriding chart type → {mapped}")
 
     has_real_data = bool(real_data and len(real_data) > 0)
 
     # Summary sheet
     if design.get("has_summary_sheet", True):
-        _build_summary_sheet(wb, design, theme)
+        _build_summary_sheet(wb, design, selected_theme)
 
     sheets = design.get("sheets", [])
 
     if has_real_data:
-        # ── Phase 7 BYPASS MODE: real data → write directly, skip Gemini columns ─
+        # ── Phase 7 BYPASS MODE: real data → write directly, skip Gemini columns ──
         # This is the ROOT CAUSE fix:
         # Gemini designs column names like "ID, Name, Category, Value" even when
         # the real data has "Name, Score 1, Score 2, Total, Grade".
@@ -287,27 +328,27 @@ async def generate_excel(design: dict, session_id: str, real_data: list | str | 
 
         if real_headers:
             sheet_name = sheets[0]["name"] if sheets else "Data"
-            _build_real_data_sheet(wb, sheet_name, real_headers, real_data, theme, design=design)
-            _build_analytics_dashboard(wb, real_data, real_headers, theme)
+            _build_real_data_sheet(wb, sheet_name, real_headers, real_data, selected_theme, design=design)
+            _build_analytics_dashboard(wb, real_data, real_headers, selected_theme)
             logger.info(f"[Phase7] Real data sheet: {len(real_data)} rows × {len(real_headers)} cols — headers: {real_headers}")
 
             # Remaining sheets use sample data
             for sheet_spec in sheets[1:]:
-                _build_data_sheet(wb, sheet_spec, theme, design, real_data=None)
+                _build_data_sheet(wb, sheet_spec, selected_theme, design, real_data=None)
         else:
             sheet_name = sheets[0]["name"] if sheets else "Data"
             if isinstance(real_data, list):
-                _build_list_data_sheet(wb, sheet_name, real_data, theme)
+                _build_list_data_sheet(wb, sheet_name, real_data, selected_theme)
             else:
                 # If structure is single item string/dict, normalize into a row matrix
-                _build_list_data_sheet(wb, sheet_name, [[str(real_data)]], theme)
+                _build_list_data_sheet(wb, sheet_name, [[str(real_data)]], selected_theme)
             
             for sheet_spec in sheets[1:]:
-                _build_data_sheet(wb, sheet_spec, theme, design, real_data=None)
+                _build_data_sheet(wb, sheet_spec, selected_theme, design, real_data=None)
     else:
-        # ── No real data — generate sample data as Phase 6 did ───────────────
+        # ── No real data — generate sample data as Phase 6 did ─────────────────
         for sheet_spec in sheets:
-            _build_data_sheet(wb, sheet_spec, theme, design, real_data=None)
+            _build_data_sheet(wb, sheet_spec, selected_theme, design, real_data=None)
 
     # Charts sheet
     if design.get("charts"):

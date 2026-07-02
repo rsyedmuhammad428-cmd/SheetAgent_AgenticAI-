@@ -24,6 +24,11 @@ export interface ClarifyOption {
   label: string;
   icon?: string;
   recommended?: boolean;
+  // HITL theme picker fields
+  header?: string;   // hex color for header preview swatch
+  row_alt?: string;  // hex color for alternating row preview
+  // HITL graph picker fields
+  desc?: string;     // short description
 }
 
 export interface SheetData {
@@ -57,7 +62,7 @@ export interface ChatSession {
 }
 
 export interface ChatAction {
-  trigger?: "download" | "clarify" | "quota_exceeded" | "approve_all" | "run_pipeline";
+  trigger?: "download" | "clarify" | "quota_exceeded" | "approve_all" | "run_pipeline" | "hitl_theme" | "hitl_graph";
   filename?: string;
   title?: string;
   download_url?: string;
@@ -70,7 +75,7 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  trigger?: "clarify" | "download" | "quota_exceeded";
+  trigger?: "clarify" | "download" | "quota_exceeded" | "hitl_theme" | "hitl_graph";
   options?: ClarifyOption[];
   sheet?: SheetData;
   charts?: ChartData[];
@@ -290,6 +295,12 @@ export function actionToMessageFields(action: ChatAction): Partial<ChatMessage> 
   }
   if (action.trigger === "quota_exceeded") {
     return { trigger: "quota_exceeded" };
+  }
+  if (action.trigger === "hitl_theme" && action.options?.length) {
+    return { trigger: "hitl_theme", options: action.options };
+  }
+  if (action.trigger === "hitl_graph" && action.options?.length) {
+    return { trigger: "hitl_graph", options: action.options };
   }
   return {};
 }

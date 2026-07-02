@@ -17,6 +17,7 @@ import {
 import type { ChatMessage, ClarifyOption } from "@/lib/sheet-agent";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { HumanInLoopThemePicker, HumanInLoopGraphPicker } from "./HumanInLoopPicker";
 
 interface UploadResult {
   session_id: string; file_name: string;
@@ -135,16 +136,17 @@ function MessageBubble({ message, onPickOption, onDownload, choicesDisabled }: {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex w-full animate-fade-in", isUser ? "justify-end" : "justify-start")}>
-      <div className={cn("flex gap-2 sm:gap-3", isUser ? "max-w-[88%] flex-row-reverse sm:max-w-[80%]" : "max-w-[92%] sm:max-w-[85%]")}>
+      <div className={cn("flex gap-2 sm:gap-3", isUser ? "max-w-[88%] flex-row-reverse sm:max-w-[80%]" : "max-w-[92%] sm:max-w-[85%]", (message.trigger === "hitl_theme" || message.trigger === "hitl_graph") && "max-w-full sm:max-w-full w-full")}>
         {!isUser && (
           <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-fuchsia-500 text-white sm:h-7 sm:w-7">
             <Sparkles className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
           </div>
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className={cn(
             "rounded-2xl px-3 py-2 text-sm leading-relaxed sm:px-4 sm:py-2.5",
             isUser ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
+            (message.trigger === "hitl_theme" || message.trigger === "hitl_graph") && "bg-gradient-to-br from-card to-muted/60 border border-primary/20 shadow-md",
           )}>
             {/* Attached file chip — only on user messages that had a file */}
             {isUser && message.attachedFileName && (
@@ -162,6 +164,22 @@ function MessageBubble({ message, onPickOption, onDownload, choicesDisabled }: {
             </div>
             {message.trigger === "clarify" && message.options && (
               <ClarifyButtons options={message.options} onPick={onPickOption} disabled={choicesDisabled} />
+            )}
+            {/* ── HITL Theme Picker ── */}
+            {message.trigger === "hitl_theme" && message.options && (
+              <HumanInLoopThemePicker
+                options={message.options}
+                onPick={onPickOption}
+                disabled={choicesDisabled}
+              />
+            )}
+            {/* ── HITL Graph Picker ── */}
+            {message.trigger === "hitl_graph" && message.options && (
+              <HumanInLoopGraphPicker
+                options={message.options}
+                onPick={onPickOption}
+                disabled={choicesDisabled}
+              />
             )}
           </div>
           {message.trigger === "download" && message.filename && (
@@ -195,7 +213,8 @@ export function ChatPanel({
 
   useEffect(() => {
     const last = messages[messages.length - 1];
-    setAwaitChoice(last?.role === "assistant" && last?.trigger === "clarify");
+    const hitlTriggers = ["clarify", "hitl_theme", "hitl_graph"] as const;
+    setAwaitChoice(last?.role === "assistant" && hitlTriggers.includes(last?.trigger as typeof hitlTriggers[number]));
   }, [messages]);
 
   async function handleFileAttach(file: File) {
@@ -216,8 +235,17 @@ export function ChatPanel({
     requestAnimationFrame(() => taRef.current?.focus());
   };
 
+  // Detect if last message is HITL step
+  const lastMsg = messages[messages.length - 1];
+  const isHitlTheme = lastMsg?.trigger === "hitl_theme";
+  const isHitlGraph = lastMsg?.trigger === "hitl_graph";
+
   const placeholder = status === "loading"
     ? "Working… press Enter or ⏹ to stop"
+    : isHitlTheme
+    ? "👆 Choose a color theme above to continue…"
+    : isHitlGraph
+    ? "👆 Choose a chart type above to continue…"
     : awaitChoice
     ? "Click a button above or type your choice…"
     : stagedFile

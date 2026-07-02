@@ -63,6 +63,118 @@ class ChatResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  HUMAN-IN-THE-LOOP (HITL) — Theme & Graph selection before Excel creation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# In-memory store: session_id → {stage, original_msg, inline_data, theme_id, graph_id, file_path}
+_hitl_state: dict[str, dict] = {}
+
+HITL_THEMES = [
+    {
+        "id": "blue",
+        "label": "Ocean Blue",
+        "header": "#1E3A5F",
+        "header_font": "#FFFFFF",
+        "row_alt": "#D6E4F0",
+        "row_base": "#FFFFFF",
+        "icon": "🌊",
+    },
+    {
+        "id": "pink",
+        "label": "Rose Pink",
+        "header": "#8B1A4A",
+        "header_font": "#FFFFFF",
+        "row_alt": "#FADADD",
+        "row_base": "#FFFFFF",
+        "icon": "🌸",
+    },
+    {
+        "id": "green",
+        "label": "Forest Green",
+        "header": "#1B5E20",
+        "header_font": "#FFFFFF",
+        "row_alt": "#C8E6C9",
+        "row_base": "#FFFFFF",
+        "icon": "🌿",
+    },
+    {
+        "id": "orange",
+        "label": "Sunset Orange",
+        "header": "#BF360C",
+        "header_font": "#FFFFFF",
+        "row_alt": "#FFE0B2",
+        "row_base": "#FFFFFF",
+        "icon": "🌅",
+    },
+    {
+        "id": "purple",
+        "label": "Royal Purple",
+        "header": "#4A148C",
+        "header_font": "#FFFFFF",
+        "row_alt": "#E1BEE7",
+        "row_base": "#FFFFFF",
+        "icon": "👑",
+    },
+    {
+        "id": "teal",
+        "label": "Teal Breeze",
+        "header": "#004D40",
+        "header_font": "#FFFFFF",
+        "row_alt": "#B2DFDB",
+        "row_base": "#FFFFFF",
+        "icon": "🌊",
+    },
+    {
+        "id": "brown",
+        "label": "Earthy Brown",
+        "header": "#4E342E",
+        "header_font": "#FFFFFF",
+        "row_alt": "#D7CCC8",
+        "row_base": "#FFFFFF",
+        "icon": "🍂",
+    },
+    {
+        "id": "dark",
+        "label": "Midnight Dark",
+        "header": "#212121",
+        "header_font": "#F5F5F5",
+        "row_alt": "#424242",
+        "row_base": "#303030",
+        "icon": "🌙",
+    },
+]
+
+HITL_GRAPHS = [
+    {"id": "bar",  "label": "Bar Chart",  "icon": "📊", "desc": "Compare values side by side"},
+    {"id": "pie",  "label": "Pie Chart",  "icon": "🥧", "desc": "Show proportions & percentages"},
+    {"id": "line", "label": "Line Graph", "icon": "📈", "desc": "Track trends over time"},
+]
+
+
+def _hitl_theme_options() -> list[dict]:
+    return [
+        {
+            "id": f"theme_{t['id']}",
+            "label": f"{t['icon']} {t['label']}",
+            "header": t["header"],
+            "row_alt": t["row_alt"],
+        }
+        for t in HITL_THEMES
+    ]
+
+
+def _hitl_graph_options() -> list[dict]:
+    return [
+        {
+            "id": f"graph_{g['id']}",
+            "label": f"{g['icon']} {g['label']}",
+            "desc": g["desc"],
+        }
+        for g in HITL_GRAPHS
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  INLINE DATA PARSER  (7 strategies)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -388,6 +500,18 @@ async def handle_message(
     if msg.startswith("/"):
         return _handle_command(msg, state, session_id)
 
+    # ── Human-in-the-Loop: handle theme / graph selection choices ────────────
+    if msg.startswith("__choice:"):
+        return await _handle_hitl_choice(msg[9:], session_id, state)
+
+    # ── Human-in-the-Loop: if HITL is pending for this session, reject ───────
+    if session_id in _hitl_state:
+        pending_stage = _hitl_state[session_id].get("stage")
+        if pending_stage == "theme":
+            return _ask_hitl_theme(session_id)
+        if pending_stage == "graph":
+            return _ask_hitl_graph(session_id)
+
     file_path   = _get_file_path(state, uploaded_file_path)
     has_file    = file_path is not None
     inline_data = _parse_inline_data(msg)
@@ -402,11 +526,122 @@ async def handle_message(
     if intent == Intent.PROCESS and has_file:
         return await _process_file(msg, file_path, state, session_id)
     if intent == Intent.CREATE:
-        return await _create_excel(msg, state, session_id,
-                                   inline_data=inline_data if has_inline else None)
+        # ── Start HITL flow ──────────────────────────────────────────────
+        _hitl_state[session_id] = {
+            "stage":       "theme",
+            "original_msg": msg,
+            "inline_data":  inline_data if has_inline else None,
+            "file_path":    file_path,
+            "theme_id":    None,
+            "graph_id":    None,
+        }
+        return _ask_hitl_theme(session_id)
     if intent == Intent.ANALYZE and state and state.cleaned_data:
         return await _analyze_data(msg, state, session_id)
     return await _answer_question(msg, state, session_id, has_file)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HITL STEP HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _ask_hitl_theme(session_id: str) -> "ChatResponse":
+    return ChatResponse(
+        text=(
+            "🎨 **Step 1 of 2 — Choose a Color Theme**\n\n"
+            "Pick a color scheme for your Excel sheet headers and rows:"
+        ),
+        intent=Intent.CREATE,
+        action={
+            "trigger":      "hitl_theme",
+            "waiting_for":  "theme",
+            "options":      _hitl_theme_options(),
+        },
+    )
+
+
+def _ask_hitl_graph(session_id: str) -> "ChatResponse":
+    return ChatResponse(
+        text=(
+            "📊 **Step 2 of 2 — Choose a Chart Type**\n\n"
+            "Select the type of chart to include in your Excel sheet:"
+        ),
+        intent=Intent.CREATE,
+        action={
+            "trigger":      "hitl_graph",
+            "waiting_for":  "graph",
+            "options":      _hitl_graph_options(),
+        },
+    )
+
+
+async def _handle_hitl_choice(
+    choice_id: str,
+    session_id: str,
+    state,
+) -> "ChatResponse":
+    """Process a HITL theme or graph choice and advance the flow."""
+    hitl = _hitl_state.get(session_id)
+
+    # No pending HITL — treat as normal message
+    if not hitl:
+        return ChatResponse(
+            "I'm ready to create your sheet! Describe what you need.",
+            Intent.QUESTION,
+        )
+
+    stage = hitl.get("stage")
+
+    # ── Stage 1: Theme selected ──────────────────────────────────────────────
+    if stage == "theme" and choice_id.startswith("theme_"):
+        hitl["theme_id"] = choice_id[6:]  # strip "theme_"
+        hitl["stage"]    = "graph"
+        logger.info(f"[HITL] {session_id[:8]} theme={hitl['theme_id']}")
+        return _ask_hitl_graph(session_id)
+
+    # ── Stage 2: Graph selected → execute creation ───────────────────────────
+    if stage == "graph" and choice_id.startswith("graph_"):
+        hitl["graph_id"] = choice_id[6:]  # strip "graph_"
+        logger.info(f"[HITL] {session_id[:8]} graph={hitl['graph_id']} — executing")
+
+        original_msg = hitl["original_msg"]
+        inline_data  = hitl["inline_data"]
+        theme_id     = hitl["theme_id"]
+        graph_id     = hitl["graph_id"]
+        file_path    = hitl.get("file_path")
+
+        # Clean up HITL state
+        del _hitl_state[session_id]
+
+        # Build theme/graph enriched prompt hint
+        theme_obj = next((t for t in HITL_THEMES if t["id"] == theme_id), HITL_THEMES[0])
+        graph_obj = next((g for g in HITL_GRAPHS if g["id"] == graph_id), HITL_GRAPHS[0])
+
+        enriched_msg = (
+            f"{original_msg}\n\n"
+            f"[USER PREFERENCES — MUST APPLY EXACTLY]\n"
+            f"Color Theme: {theme_obj['label']} — "
+            f"Header color: {theme_obj['header']}, "
+            f"Header font: {theme_obj['header_font']}, "
+            f"Alternating row color: {theme_obj['row_alt']}, "
+            f"Base row color: {theme_obj['row_base']}\n"
+            f"Chart Type: {graph_obj['label']} ({graph_id})"
+        )
+
+        # If file was involved, use file processing
+        if file_path:
+            return await _process_file(enriched_msg, file_path, state, session_id)
+        return await _create_excel(
+            enriched_msg, state, session_id,
+            inline_data=inline_data,
+            theme=theme_obj,
+            graph_type=graph_id,
+        )
+
+    # Unexpected choice — re-ask
+    if stage == "theme":
+        return _ask_hitl_theme(session_id)
+    return _ask_hitl_graph(session_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -597,6 +832,8 @@ async def _create_excel(
     state,
     session_id: str,
     inline_data: Optional[list] = None,
+    theme: Optional[dict] = None,
+    graph_type: Optional[str] = None,
 ) -> ChatResponse:
     from app.agents.quota_helper import is_quota_error
     from app.services.ws_manager import ws_manager
@@ -666,6 +903,7 @@ async def _create_excel(
 
         output_path = await generate_excel(
             design=design, session_id=session_id, real_data=real_data,
+            theme=theme, graph_type=graph_type,
         )
         return _build_excel_response(output_path, design, session_id)
 

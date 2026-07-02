@@ -267,12 +267,25 @@ function SheetAgentPage() {
   };
   const handlePickOption = async (opt: ClarifyOption) => {
     addMsg({ role: "user", text: opt.label });
+    setStatus("loading");
     try {
-      const res  = await sendMessage(`__choice:${opt.id}`, sessionIdRef.current, null);
+      // HITL choices have IDs like "theme_blue", "graph_bar"
+      // Regular clarify choices have IDs like "basic", "with_chart"
+      const isHitl = opt.id.startsWith("theme_") || opt.id.startsWith("graph_");
+      const msgToSend = isHitl ? `__choice:${opt.id}` : `__choice:${opt.id}`;
+      const res  = await sendMessage(msgToSend, sessionIdRef.current, null);
+      if (res.session_id && res.session_id !== sessionIdRef.current) {
+        sessionIdRef.current = res.session_id;
+        setActiveChatId(res.session_id);
+        setupWs(res.session_id);
+      }
       const extra = actionToMessageFields(res.action);
       addMsg({ role: "assistant", text: res.text, ...extra });
+      if (extra.trigger === "download") refreshChatHistory();
     } catch {
-      addMsg({ role: "assistant", text: "Backend not reachable. Paste your data and try again." });
+      addMsg({ role: "assistant", text: "Backend not reachable. Please try again." });
+    } finally {
+      setStatus("idle");
     }
   };
 
