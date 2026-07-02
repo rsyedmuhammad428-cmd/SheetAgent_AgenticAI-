@@ -280,7 +280,14 @@ function SheetAgentPage() {
         setupWs(res.session_id);
       }
       const extra = actionToMessageFields(res.action);
-      addMsg({ role: "assistant", text: res.text, ...extra });
+      if (extra.trigger === "download" && extra.filename &&
+          seenFilenames.current.has(extra.filename)) {
+        addMsg({ role: "assistant", text: res.text });
+      } else {
+        if (extra.trigger === "download" && extra.filename)
+          seenFilenames.current.add(extra.filename);
+        addMsg({ role: "assistant", text: res.text, ...extra });
+      }
       if (extra.trigger === "download") refreshChatHistory();
     } catch {
       addMsg({ role: "assistant", text: "Backend not reachable. Please try again." });
