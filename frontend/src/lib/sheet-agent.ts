@@ -236,7 +236,12 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
 
 export async function downloadExcel(filename: string): Promise<Blob> {
   const res = await fetch(buildApiUrl(`/api/download/excel/${filename}`));
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error("File has expired or was removed. Please generate a new one.");
+    }
+    throw new Error(`Download failed: ${res.status}`);
+  }
   return res.blob();
 }
 
