@@ -216,16 +216,30 @@ class FileExtractor:
                     logger.info("[Extractor] Supplementing table data with Gemini text parse")
                     try:
                         gemini_rows = await _gemini_extract_structured(full_text)
-                        if gemini_rows and len(gemini_rows) > len(all_data):
-                            merged = _merge_rows(all_data, gemini_rows, all_cols)
-                            if len(merged) > len(all_data):
+                        if gemini_rows and len(gemini_rows) > 0:
+                            gemini_cols = len(gemini_rows[0])
+                            curr_cols   = len(all_cols)
+                            
+                            if (curr_cols <= 1 and gemini_cols > 1) or len(gemini_rows) > len(all_data):
                                 logger.info(
-                                    f"[Extractor] Merged: {len(all_data)} table rows + "
-                                    f"{len(gemini_rows)} Gemini rows = {len(merged)} total"
+                                    f"[Extractor] Replacing {len(all_data)} rows ({curr_cols} cols) "
+                                    f"with {len(gemini_rows)} Gemini rows ({gemini_cols} cols)"
                                 )
-                                all_data = merged
-                                result["extracted_data"] = all_data
-                                result["row_count"]      = len(all_data)
+                                all_data = gemini_rows
+                                all_cols = list(gemini_rows[0].keys())
+                                result["extracted_data"]    = all_data
+                                result["extracted_columns"] = all_cols
+                                result["row_count"]         = len(all_data)
+                            else:
+                                merged = _merge_rows(all_data, gemini_rows, all_cols)
+                                if len(merged) > len(all_data):
+                                    logger.info(
+                                        f"[Extractor] Merged: {len(all_data)} table rows + "
+                                        f"{len(gemini_rows)} Gemini rows = {len(merged)} total"
+                                    )
+                                    all_data = merged
+                                    result["extracted_data"] = all_data
+                                    result["row_count"]      = len(all_data)
                     except Exception as e:
                         from app.agents.quota_helper import is_quota_error
                         if is_quota_error(e):

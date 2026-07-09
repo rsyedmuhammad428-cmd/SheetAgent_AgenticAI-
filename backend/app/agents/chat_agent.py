@@ -523,9 +523,10 @@ async def handle_message(
         f"has_file={has_file} inline_rows={len(inline_data)}"
     )
 
-    if intent == Intent.PROCESS and has_file:
-        return await _process_file(msg, file_path, state, session_id)
-    if intent == Intent.CREATE:
+    if intent in (Intent.PROCESS, Intent.CREATE):
+        if intent == Intent.PROCESS and not has_file:
+            return ChatResponse("No file found to process.", Intent.PROCESS)
+        
         # ── Start HITL flow ──────────────────────────────────────────────
         _hitl_state[session_id] = {
             "stage":       "theme",
@@ -536,6 +537,7 @@ async def handle_message(
             "graph_id":    None,
         }
         return _ask_hitl_theme(session_id)
+
     if intent == Intent.ANALYZE and state and state.cleaned_data:
         return await _analyze_data(msg, state, session_id)
     return await _answer_question(msg, state, session_id, has_file)
@@ -630,7 +632,10 @@ async def _handle_hitl_choice(
 
         # If file was involved, use file processing
         if file_path:
-            return await _process_file(enriched_msg, file_path, state, session_id)
+            return await _process_file(
+                enriched_msg, file_path, state, session_id,
+                theme=theme_obj, graph_type=graph_id
+            )
         return await _create_excel(
             enriched_msg, state, session_id,
             inline_data=inline_data,
@@ -737,6 +742,8 @@ async def _process_file(
     file_path: str,
     state,
     session_id: str,
+    theme: dict = None,
+    graph_type: str = None,
 ) -> ChatResponse:
     from app.agents.file_extractor import file_extractor
     from app.agents.quota_helper   import is_quota_error
@@ -809,6 +816,7 @@ async def _process_file(
 
         output_path = await generate_excel(
             design=design, session_id=session_id, real_data=real_data,
+            theme=theme, graph_type=graph_type,
         )
         return _build_excel_response(output_path, design, session_id)
 
