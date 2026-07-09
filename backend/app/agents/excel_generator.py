@@ -329,7 +329,7 @@ async def generate_excel(
         if real_headers:
             sheet_name = sheets[0]["name"] if sheets else "Data"
             _build_real_data_sheet(wb, sheet_name, real_headers, real_data, selected_theme, design=design)
-            _build_analytics_dashboard(wb, real_data, real_headers, selected_theme)
+            _build_analytics_dashboard(wb, real_data, real_headers, selected_theme, design)
             logger.info(f"[Phase7] Real data sheet: {len(real_data)} rows × {len(real_headers)} cols — headers: {real_headers}")
 
             # Remaining sheets use sample data
@@ -1042,25 +1042,56 @@ def _safe_float(val):
     except (ValueError, TypeError):
         return 0.0
 
-def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, theme: dict):
+def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, theme: dict, design: dict = None):
     if not real_data: return
     headers_lower = [str(h).lower() for h in headers]
     
-    finance_cols = [h for h in headers_lower if "revenue" in h or "profit" in h or "sales" in h or "margin" in h or "cost" in h]
+    finance_cols = [h for h in headers_lower if "revenue" in h or "profit" in h or "sales" in h or "margin" in h or "cost" in h or "salary" in h or "budget" in h or "fee" in h]
     performance_cols = [h for h in headers_lower if "score" in h or "mark" in h or "rating" in h or "grade" in h or "gpa" in h]
     
     is_financial = len(finance_cols) > 0
     is_performance = len(performance_cols) > 0 and not is_financial
     
+    # ── Try to get explicit columns from design ──
+    explicit_val = None
+    explicit_cat = None
+    if design and design.get("charts"):
+        c = design["charts"][0]
+        v_col = c.get("value_column", "").strip()
+        c_col = c.get("category_column", "").strip()
+        if v_col:
+            explicit_val = next((h for h in headers if str(h).lower() == v_col.lower()), None)
+            if not explicit_val:
+                explicit_val = next((h for h in headers if v_col.lower() in str(h).lower()), None)
+        if c_col:
+            explicit_cat = next((h for h in headers if str(h).lower() == c_col.lower()), None)
+            if not explicit_cat:
+                explicit_cat = next((h for h in headers if c_col.lower() in str(h).lower()), None)
+
     if not is_financial and not is_performance:
         _id_like_words  = {"id", "no", "ref", "code", "num", "number", "reference"}
         _id_like_substr = ("serial", "uuid", "zipcode", "phone")
         numeric_cols = []
         for h in headers:
             h_lower = str(h).strip().lower()
-            words = re.split(r"[^a-z0-9]+", h_lower)
-            if any(w in _id_like_words for w in words if w) or any(s in h_lower for s in _id_like_substr):
+            
+            # Use explicit value if provided, ignoring ID heuristics
+            if explicit_val and str(h).lower() == explicit_val.lower():
+                numeric_cols.append(h)
+                break
+                
+            # Improved ID detection for CamelCase like "EmployeeID"
+            is_id = False
+            for w in _id_like_words:
+                if h_lower == w or h_lower.endswith(w) or h_lower.startswith(w + "_"):
+                    is_id = True
+                    break
+            if any(s in h_lower for s in _id_like_substr):
+                is_id = True
+                
+            if is_id:
                 continue
+                
             for row in real_data[:5]:
                 val = row.get(h)
                 if isinstance(val, (int, float)):
@@ -1070,8 +1101,7 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
                     numeric_cols.append(h)
                     break
         if not numeric_cols:
-            # Fall back to including ID-like columns rather than showing nothing,
-            # in case EVERY numeric column happened to look ID-like.
+            # Fall back to including ID-like columns rather than showing nothing
             for h in headers:
                 for row in real_data[:5]:
                     val = row.get(h)
@@ -1084,6 +1114,8 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
     else:
         is_general = False
         numeric_cols = []
+        if explicit_val:
+            numeric_cols.append(explicit_val)
         
     ws = wb.create_sheet("Dashboard", 1)  # Put it right after summary
     ws.sheet_view.showGridLines = False
@@ -1114,7 +1146,7 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
         _render_general_dashboard(ws, real_data, headers, numeric_cols, theme, brd, name_key)
 
 def _render_financial_dashboard(ws, real_data, headers, headers_lower, theme, brd, name_key):
-    rev_key = next((h for h in headers if "revenue" in str(h).lower() or "sales" in str(h).lower()), None)
+    rev_key = next((h for h in headers if "revenue" in str(h).lower() or "sales" in str(h).lower() or "salary" in str(h).lower() or "budget" in str(h).lower() or "fee" in str(h).lower()), None)
     prof_key = next((h for h in headers if "profit" in str(h).lower() and "margin" not in str(h).lower()), None)
 
     # Safety net: "is_financial" is detected from a broader keyword set

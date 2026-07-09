@@ -440,6 +440,7 @@ Return ONLY this JSON (no markdown, no code fences, start with {):
             if rows:
                 result["extracted_data"]    = rows
                 result["extracted_columns"] = headers
+                result["row_count"]         = len(rows)
                 result["extracted_text"]    = (
                     f"Image: {fp.name} | {summary} | "
                     f"{len(rows)} rows, columns: {headers}"

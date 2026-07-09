@@ -178,253 +178,35 @@ def _hitl_graph_options() -> list[dict]:
 #  INLINE DATA PARSER  (7 strategies)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _has_inline_data_heuristic(msg: str) -> bool:
+    """
+    Quick heuristic to detect if the user's message contains raw inline data (CSV, paragraphs, lists).
+    Returns True if it likely contains data, so the intent classifier knows to trigger CREATE.
+    The actual extraction will be handled powerfully by Gemini inside _create_excel.
+    """
+    msg_strip = msg.strip()
+    lines = [l for l in msg_strip.splitlines() if l.strip()]
+    
+    # 1. Has multiple lines and contains numbers
+    if len(lines) >= 3 and any(char.isdigit() for char in msg_strip):
+        return True
+        
+    # 2. Looks like a CSV (lots of commas + numbers)
+    if msg_strip.count(',') >= 4 and any(char.isdigit() for char in msg_strip):
+        return True
+        
+    # 3. Contains typical data words + numbers
+    lower_msg = msg_strip.lower()
+    data_words = ["salary", "marks", "score", "employeeid", "department", "name", "price", "revenue"]
+    if any(w in lower_msg for w in data_words) and any(char.isdigit() for char in msg_strip):
+        return True
+        
+    return False
+
 def _parse_inline_data(message: str) -> list[dict]:
-    """
-    Extract structured data rows from a user message.
-    Returns [] if no clear tabular data is found (Gemini will then parse it).
-    """
-    msg = message.strip()
-
-    # ── Strategy 1: Pipe table  "Name | Score\nAli | 85" ─────────────────
-    pipe_lines = [l.strip() for l in msg.splitlines() if "|" in l and l.strip()]
-    if len(pipe_lines) >= 2:
-        raw_headers = [h.strip() for h in pipe_lines[0].split("|") if h.strip()]
-        is_header   = all(not re.search(r'^\d+$', p) for p in raw_headers)
-        if is_header and len(pipe_lines) >= 3:
-            headers    = raw_headers
-            data_lines = [l for l in pipe_lines[1:] if not re.match(r'^[\|\s\-:]+$', l)]
-        else:
-            headers    = [f"Col{i+1}" for i in range(len(raw_headers))]
-            data_lines = pipe_lines
-        rows = []
-        for line in data_lines:
-            vals = [v.strip() for v in line.split("|") if v.strip() != ""]
-            if vals and len(vals) >= 2:
-                while len(vals) < len(headers):
-                    vals.append("")
-                rows.append({h: _coerce(v) for h, v in zip(headers, vals[:len(headers)])})
-        if rows:
-            return rows
-
-    # ── Strategy 2: Delimiter lines  "Ali,85\nSara,92" ────────────────────
-    lines = [l.strip() for l in msg.splitlines() if l.strip()]
-    for delim in ["\t", ",", ";"]:
-        candidates = [l for l in lines if delim in l]
-        if len(candidates) >= 2:
-            col_counts = [l.count(delim) for l in candidates]
-            if len(set(col_counts)) <= 2 and min(col_counts) >= 1:
-                parts0    = [p.strip() for p in candidates[0].split(delim)]
-                is_header = all(not re.match(r'^[\d.]+$', p.strip()) for p in parts0)
-                if is_header and len(candidates) >= 3:
-                    headers   = parts0
-                    data_rows = candidates[1:]
-                else:
-                    headers   = [f"Col{i+1}" for i in range(len(parts0))]
-                    data_rows = candidates
-                rows = []
-                for line in data_rows:
-                    vals = [v.strip() for v in line.split(delim)]
-                    while len(vals) < len(headers):
-                        vals.append("")
-                    rows.append({h: _coerce(v) for h, v in zip(headers, vals[:len(headers)])})
-                if rows:
-                    return rows
-
-    # ── Strategy 3: "Name  Numbers" on separate lines ─────────────────────
-    name_score_rows = []
-    for line in lines:
-        line_clean = line.rstrip(',').strip()
-        m = re.match(r'^([A-Za-z][A-Za-z\s\-\.]{1,40}?)\s+([\d][\d\.\s]*)$', line_clean)
-        if m:
-            name = m.group(1).strip()
-            nums = re.findall(r'[\d]+(?:\.\d+)?', m.group(2))
-            if nums:
-                name_score_rows.append((name, nums))
-    if len(name_score_rows) >= 2:
-        return _build_name_score_rows(name_score_rows)
-
-    # ── Strategy 4: Comma-separated "Name N, Name N" ──────────────────────
-    comma_parts = [p.strip() for p in re.split(r',\s*', msg) if p.strip()]
-    inline_rows = []
-    for part in comma_parts:
-        m = re.match(r'^([A-Za-z][A-Za-z\s\.\-]{1,40}?)\s+([\d][\d\.\s]*)$', part.strip())
-        if m:
-            name = m.group(1).strip()
-            nums = re.findall(r'[\d]+(?:\.\d+)?', m.group(2))
-            if nums:
-                inline_rows.append((name, nums))
-    if len(inline_rows) >= 2:
-        return _build_name_score_rows(inline_rows)
-
-    # ── Strategy 5: Simple run-together "Ali85Sara92" ─────────────────────
-    rt_matches = re.findall(
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})([\d][\d\.]*?)(?=[A-Z]|Total|$)',
-        msg
-    )
-    rt_rows = [
-        (name.strip(), re.findall(r'[\d]+(?:\.\d+)?', nums))
-        for name, nums in rt_matches
-        if name.strip() and re.findall(r'[\d]+(?:\.\d+)?', nums) and len(name.strip()) > 2
-    ]
-    if len(rt_rows) >= 2:
-        return _build_name_score_rows(rt_rows)
-
-    # ── Strategy 7: Explicit N-column run-together (FIX for Image 1/2) ────
-    # Handles: "three columns:Col1Col2Col3Name1 N1 N2%Name2 N3 N4%..."
-    # User says e.g. "formatted with three columns:" or "2 columns:"
-    result_s7 = _parse_ncol_runtogether(msg)
-    if result_s7:
-        return result_s7
-
+    # Dummy function to satisfy backward compatibility
+    # The actual extraction is now handled by Gemini in _create_excel
     return []
-    # ── Strategy 6: Run-together compound headers + deduplicated data+% ───
-    # e.g. "Employee NamePerf ScoreSarah Jenkins9292%"
-    data_matches_6 = re.findall(r'([A-Z][a-z]+(?: [A-Z][a-z]+){1,3})((?:\d+%?)+)', msg)
-    data_matches_6 = [(n, v) for n, v in data_matches_6
-                      if not re.match(r'Total|Summary|Average|Grand', n, re.I)]
-    if len(data_matches_6) >= 2:
-        rows_raw = []
-        for name, num_str in data_matches_6:
-            parts   = re.findall(r'\d+%?', num_str)
-            cleaned = []
-            for part in parts:
-                pct    = part.endswith('%')
-                digits = part.rstrip('%')
-                if (len(digits) >= 4 and len(digits) % 2 == 0
-                        and digits[:len(digits) // 2] == digits[len(digits) // 2:]):
-                    half = digits[:len(digits) // 2]
-                    cleaned.append(int(half))
-                    cleaned.append(f"{half}%" if pct else int(half))
-                else:
-                    cleaned.append(f"{digits}%" if pct else _coerce(digits))
-            rows_raw.append((name, cleaned))
-
-        first_name  = rows_raw[0][0]
-        first_pos   = msg.find(first_name)
-        pre_text    = msg[:first_pos] if first_pos > 0 else ""
-        last_colon  = pre_text.rfind(':')
-        header_block = pre_text[last_colon + 1:].strip() if last_colon >= 0 else pre_text.strip()
-        header_split = re.sub(r'(?<=[a-z])(?=[A-Z])', '|', header_block)
-        raw_headers  = [h.strip() for h in header_split.split('|')
-                        if h.strip() and len(h.strip()) > 2]
-        _noise = {
-            'here','is','are','company','data','formatted','similarly','to','your',
-            'student','performance','table','including','metrics','and','column',
-            'for','efficiency','percentages','create','sheet','my','given','below',
-            'following','the','this','format','like','above','provided',
-        }
-        col_headers = [h for h in raw_headers
-                       if not all(w.lower() in _noise for w in h.split())]
-        max_vals = max(len(r[1]) for r in rows_raw)
-        if len(col_headers) >= 1 + max_vals:
-            final_headers = col_headers[:1 + max_vals]
-        elif col_headers:
-            val_cols = col_headers[1:] if len(col_headers) > 1 else []
-            while len(val_cols) < max_vals:
-                val_cols.append(f"Value {len(val_cols) + 1}")
-            final_headers = [col_headers[0]] + val_cols
-        else:
-            final_headers = ["Name"] + [f"Value {i+1}" for i in range(max_vals)]
-
-        rows = []
-        for name, vals in rows_raw:
-            row = {final_headers[0]: name}
-            for i, h in enumerate(final_headers[1:]):
-                row[h] = vals[i] if i < len(vals) else ""
-            rows.append(row)
-        if rows:
-            return rows
-
-
-
-def _parse_ncol_runtogether(msg: str) -> list[dict]:
-    """
-    Strategy 7: CamelCase-split the payload after the last colon.
-    Separates header segments (no digits) from the data segment (contains digits+%).
-    Then parses data rows from the data segment.
-
-    Covers Image 1 pattern:
-      "three columns:Task NamePriority Level (1-10)Completion Percentage
-       API Integration995%Frontend UI Design780%..."
-    """
-    # Find last colon — everything after is headers+data run-together
-    last_colon = msg.rfind(':')
-    if last_colon < 0:
-        return []
-    payload = msg[last_colon + 1:].strip()
-    if not payload:
-        return []
-
-    # CamelCase-split the payload into segments
-    split_payload = re.sub(r'(?<=[a-z\)])(?=[A-Z])', '|', payload)
-    segments = [s.strip() for s in split_payload.split('|') if s.strip()]
-    if not segments:
-        return []
-
-    # Separate header segments from the data segment
-    # Headers = segments without digits+%; Data = first segment with digits+%
-    headers     = []
-    data_segment = ''
-    for seg in segments:
-        if re.search(r'\d+%', seg):
-            data_segment = seg
-            break
-        headers.append(seg)
-
-    if not data_segment or len(headers) < 1:
-        return []
-
-    # Parse data rows from the data segment: Name + 1digit + 2-3digits + %
-    data_rows = re.findall(r'([A-Z][a-zA-Z\s]+?)(\d)(\d{1,3})(%)', data_segment)
-    # Filter out Total/Summary rows
-    data_rows = [(n.strip(), v1, v2) for n, v1, v2, _ in data_rows
-                 if not re.match(r'Total|Summary|Average|Grand', n.strip(), re.I)
-                 and len(n.strip()) > 1]
-
-    if len(data_rows) < 2:
-        return []
-
-    # Build final headers (use what user stated, pad if needed)
-    h_name = headers[0] if len(headers) >= 1 else "Name"
-    h_val1 = headers[1] if len(headers) >= 2 else "Value 1"
-    h_val2 = headers[2] if len(headers) >= 3 else "Value 2 (%)"
-
-    rows = []
-    for name, v1, v2 in data_rows:
-        rows.append({h_name: name, h_val1: int(v1), h_val2: f"{v2}%"})
-    return rows
-
-
-def _find_header_end_in_name(raw_name: str, payload: str) -> int:
-    """Kept for compatibility."""
-    m = re.search(r'[a-z\)]([A-Z])', raw_name)
-    return m.start() + 1 if m else 0
-
-
-def _extract_headers_from_block(text: str, col_count=None) -> list:
-    """Kept for compatibility."""
-    if not text.strip():
-        return []
-    split = re.sub(r'(?<=[a-z\)])(?=[A-Z])', '|', text.strip())
-    parts = [p.strip() for p in split.split('|') if p.strip() and len(p.strip()) > 1]
-    if col_count and len(parts) >= col_count:
-        return parts[:col_count]
-    return parts if parts else []
-
-
-def _build_name_score_rows(name_score_list: list) -> list[dict]:
-    max_nums = max(len(r[1]) for r in name_score_list)
-    headers  = ["Name"] + (["Score"] if max_nums == 1
-                            else [f"Score {i+1}" for i in range(max_nums)])
-    rows = []
-    for name, nums in name_score_list:
-        row = {"Name": name}
-        for i, h in enumerate(headers[1:]):
-            v = nums[i] if i < len(nums) else "0"
-            row[h] = float(v) if isinstance(v, str) and '.' in v else (
-                int(v) if isinstance(v, str) and v.isdigit() else v)
-        rows.append(row)
-    return rows
 
 
 def _coerce(val: str):
@@ -514,13 +296,13 @@ async def handle_message(
 
     file_path   = _get_file_path(state, uploaded_file_path)
     has_file    = file_path is not None
-    inline_data = _parse_inline_data(msg)
-    has_inline  = len(inline_data) >= 2
+    has_inline  = _has_inline_data_heuristic(msg)
+    inline_data = []
 
     intent = await _classify_intent(msg, has_file, state, has_inline)
     logger.info(
         f"[{session_id[:8]}] Intent={intent.value} "
-        f"has_file={has_file} inline_rows={len(inline_data)}"
+        f"has_file={has_file} has_inline={has_inline}"
     )
 
     if intent in (Intent.PROCESS, Intent.CREATE):
