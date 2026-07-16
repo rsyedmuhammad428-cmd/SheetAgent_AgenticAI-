@@ -27,6 +27,8 @@ BUG 3 — PDF/image gives 0 rows → sample data
   immediately instead of silently returning [].
 """
 import asyncio
+import csv
+import io
 import logging
 import re
 from pathlib import Path
@@ -207,6 +209,88 @@ def _parse_inline_data(message: str) -> list[dict]:
     # Dummy function to satisfy backward compatibility
     # The actual extraction is now handled by Gemini in _create_excel
     return []
+
+
+def _try_parse_csv_locally(text: str) -> list[dict]:
+    """
+    Try to parse CSV/comma-separated data from the user's message WITHOUT
+    using an LLM. CSV is a deterministic format — sending it to Gemini is
+    unreliable (truncation, hallucination, null values) and slow.
+
+    This parser:
+    - Strips non-CSV content (HITL preferences, instructions)
+    - Uses Python's csv module for correct field splitting
+    - Auto-coerces numbers
+    - Returns list[dict] if successful, [] if the text is not CSV
+    """
+    lines = text.strip().splitlines()
+
+    # Collect only lines that look like CSV rows (contain commas)
+    csv_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Stop at HITL preference blocks appended to the message
+        if stripped.startswith("[") and "PREFERENCES" in stripped.upper():
+            break
+        if stripped.startswith("Color Theme:") or stripped.startswith("Chart Type:"):
+            continue
+        if "," in stripped:
+            csv_lines.append(stripped)
+
+    if len(csv_lines) < 2:  # Need header + at least 1 data row
+        return []
+
+    # Parse with csv module
+    try:
+        reader = csv.reader(io.StringIO("\n".join(csv_lines)))
+        all_rows = list(reader)
+    except csv.Error:
+        return []
+
+    if len(all_rows) < 2:
+        return []
+
+    header = [h.strip() for h in all_rows[0]]
+    num_fields = len(header)
+
+    # Need at least 2 columns to be valid CSV
+    if num_fields < 2:
+        return []
+
+    # Check consistency: ≥50% of data rows must match header field count
+    data_rows = all_rows[1:]
+    consistent = sum(1 for row in data_rows if len(row) == num_fields)
+    if consistent < len(data_rows) * 0.5:
+        return []
+
+    # Build list of dicts with automatic number coercion
+    result: list[dict] = []
+    for row in data_rows:
+        if len(row) != num_fields:
+            continue  # Skip malformed rows
+        row_dict: dict = {}
+        for i, col_name in enumerate(header):
+            val = row[i].strip()
+            # Coerce to int or float if possible
+            try:
+                if "." in val:
+                    row_dict[col_name] = float(val)
+                elif val.lstrip("-").isdigit():
+                    row_dict[col_name] = int(val)
+                else:
+                    row_dict[col_name] = val
+            except (ValueError, TypeError):
+                row_dict[col_name] = val
+        result.append(row_dict)
+
+    if result:
+        logger.info(
+            f"[SheetAgent] Local CSV parse: {len(result)} rows × {num_fields} cols "
+            f"— headers: {header}"
+        )
+    return result
 
 
 def _coerce(val: str):
@@ -632,7 +716,19 @@ async def _create_excel(
 
     real_data = inline_data  # populated by regex parser, may be None
 
-    # ── If regex parser found nothing, ask Gemini to extract from the text ─
+    # ── STEP 1: Try local CSV parsing FIRST (instant, 100% accurate) ─────
+    # CSV is a deterministic format. Sending 70 rows to an LLM is unreliable
+    # (nulls, truncation, hallucination) and slow. Parse it locally.
+    if not real_data:
+        csv_rows = _try_parse_csv_locally(msg)
+        if csv_rows:
+            real_data = csv_rows
+            await ws_manager.send_log(
+                session_id, "SheetAgent",
+                f"✅ Parsed {len(csv_rows)} rows of CSV data locally"
+            )
+
+    # ── STEP 2: If not CSV, ask Gemini to extract from free-text ──────────
     if not real_data:
         await ws_manager.send_log(session_id, "SheetAgent",
                                   "Extracting data from your message...")
