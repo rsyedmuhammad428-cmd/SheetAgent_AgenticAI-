@@ -238,7 +238,7 @@ async def _gemini_extract_data_from_text(text: str) -> list[dict]:
         "The text contains a table or list — find every row.\n\n"
         "RULES:\n"
         "1. Use ONLY values present in the text. NEVER invent or add data.\n"
-        "2. Detect column names from the text headers.\n"
+        "2. Detect column names from the text headers. DO NOT extract data values from column headers (e.g. if a header is 'Total (35)', the column name is 'Total (35)' and the data must come from the rows).\n"
         "3. Include every data row — do not truncate.\n"
         "4. Numbers must be actual numbers, not strings.\n"
         "5. If the user states column names explicitly, use those EXACT names.\n\n"

@@ -1116,7 +1116,10 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
         importance_keywords = ["total", "profit", "revenue", "sales", "margin", "cost", "salary", "budget", "fee", "amount", "price", "score", "mark", "rating", "grade", "gpa", "qty", "quantity", "count", "net", "gross"]
         
         def get_importance(h):
-            h_l = str(h).lower()
+            h_l = str(h).lower().strip()
+            # If the header is EXACTLY one of the keywords, it's the most important
+            if h_l in importance_keywords:
+                return importance_keywords.index(h_l) - 100
             for i, kw in enumerate(importance_keywords):
                 if kw in h_l:
                     return i

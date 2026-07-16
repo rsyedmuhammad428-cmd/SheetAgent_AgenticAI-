@@ -92,7 +92,15 @@ async def call_with_retry(
                 raise
 
             if _is_rpm_error(e):
-                wait = _get_retry_delay(e) + 2  # +2s buffer
+                wait = _get_retry_delay(e)
+                # If the wait is huge (e.g., Gemini asks to wait 300s),
+                # do NOT sleep. Raise the error immediately so llm_failover
+                # can instantly switch to OpenRouter (Provider B).
+                if wait > 15:
+                    logger.warning(f"[RateLimiter] RPM hit, but wait ({wait}s) is too long. Failing fast.")
+                    raise
+                
+                wait += 2 # +2s buffer for short waits
                 if attempt <= MAX_RPM_RETRIES:
                     logger.warning(
                         f"[RateLimiter] RPM hit (attempt {attempt}/{MAX_RPM_RETRIES}) "
@@ -107,3 +115,4 @@ async def call_with_retry(
 
     # All retries exhausted — raise last RPM error
     raise last_exc
+
