@@ -1,3 +1,4 @@
+import { fetchWithRetry } from '@/lib/utils';
 /**
  * sheet-agent.ts  — Backend API client for SheetAgent
  *
@@ -129,7 +130,7 @@ export async function sendMessage(
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch(buildApiUrl("/api/chat/"), {
+  const res = await fetchWithRetry(buildApiUrl("/api/chat/"), {
     method: "POST",
     headers,
     signal: _currentAbort.signal,
@@ -156,7 +157,7 @@ export async function fetchChatHistory(token?: string): Promise<ChatSession[]> {
     headers["Authorization"] = `Bearer ${token}`;
   }
   
-  const res = await fetch(buildApiUrl("/api/chat/history"), {
+  const res = await fetchWithRetry(buildApiUrl("/api/chat/history"), {
     method: "GET",
     headers,
   });
@@ -187,7 +188,7 @@ export async function fetchChatMessages(
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(buildApiUrl(`/api/chat/history/${sessionId}`), {
+  const res = await fetchWithRetry(buildApiUrl(`/api/chat/history/${sessionId}`), {
     method: "GET",
     headers,
   });
@@ -206,7 +207,7 @@ export async function deleteChatSession(
 ): Promise<void> {
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(buildApiUrl(`/api/chat/history/${sessionId}`), {
+  const res = await fetchWithRetry(buildApiUrl(`/api/chat/history/${sessionId}`), {
     method: "DELETE",
     headers,
   });
@@ -221,7 +222,7 @@ export async function deleteChatSession(
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(buildApiUrl("/api/upload/"), {
+  const res = await fetchWithRetry(buildApiUrl("/api/upload/"), {
     method: "POST",
     body: form,
   });
@@ -235,7 +236,7 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
 // ── Excel download ────────────────────────────────────────────────────────────
 
 export async function downloadExcel(filename: string): Promise<Blob> {
-  const res = await fetch(buildApiUrl(`/api/download/excel/${filename}`));
+  const res = await fetchWithRetry(buildApiUrl(`/api/download/excel/${filename}`));
   if (!res.ok) {
     if (res.status === 404) {
       throw new Error("File has expired or was removed. Please generate a new one.");

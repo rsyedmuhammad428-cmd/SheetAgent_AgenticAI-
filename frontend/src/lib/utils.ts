@@ -28,3 +28,27 @@ export function getPakistanGreeting(): string {
   if (hour >= 17 && hour < 21) return "Good evening";
   return "Good night";
 }
+
+/**
+ * A wrapper around fetch that automatically retries the request if it fails.
+ * Perfect for handling Hugging Face cold starts where the first request often times out.
+ */
+export async function fetchWithRetry(url: string | URL | Request, options: RequestInit = {}, maxRetries = 3, delayMs = 3000): Promise<Response> {
+  let lastError: any;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(url, options);
+      // We only retry on actual network errors (Failed to fetch), not 4xx/5xx responses.
+      // If we got a response (even 500), the backend is awake, so we return it.
+      return response;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[fetchWithRetry] Attempt ${i + 1}/${maxRetries} failed for ${url}. Retrying in ${delayMs}ms...`);
+      if (i < maxRetries - 1) {
+        await new Promise(res => setTimeout(res, delayMs));
+      }
+    }
+  }
+  throw lastError;
+}

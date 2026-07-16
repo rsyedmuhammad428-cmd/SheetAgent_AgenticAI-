@@ -1,3 +1,4 @@
+import { fetchWithRetry } from '@/lib/utils';
 /**
  * auth.ts — Authentication API client
  * Connects to FastAPI backend auth endpoints (backend/app/api/routes/auth.py).
@@ -80,7 +81,7 @@ export function authHeaders(): Record<string, string> {
 // ── API calls ─────────────────────────────────────────────────────────────────
 
 async function authFetch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(buildApiUrl(path), {
+  const res = await fetchWithRetry(buildApiUrl(path), {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify(body),
@@ -121,7 +122,7 @@ export async function login(
 export async function logout(): Promise<void> {
   const token = getToken();
   if (token) {
-    await fetch(buildApiUrl("/api/auth/logout"), {
+    await fetchWithRetry(buildApiUrl("/api/auth/logout"), {
       method:  "POST",
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
@@ -130,7 +131,7 @@ export async function logout(): Promise<void> {
 }
 
 export async function getMe(): Promise<User> {
-  const res = await fetch(buildApiUrl("/api/auth/me"), {
+  const res = await fetchWithRetry(buildApiUrl("/api/auth/me"), {
     headers: { ...authHeaders() },
   });
   if (!res.ok) throw new Error("Not authenticated");
