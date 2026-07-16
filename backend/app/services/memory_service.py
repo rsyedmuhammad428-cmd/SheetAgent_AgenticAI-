@@ -18,7 +18,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(settings.database_url, echo=False)
+_kwargs = {"echo": False}
+if "postgresql" in settings.database_url:
+    _kwargs.update({"pool_pre_ping": True, "pool_recycle": 300, "pool_timeout": 30})
+engine = create_async_engine(settings.database_url, **_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

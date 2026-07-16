@@ -12,12 +12,22 @@ class LLMFailoverController:
     Provides bidirectional failover between Provider A (Gemini) and Provider B (OpenRouter).
     """
 
+    # Circuit breaker: skip a provider after N consecutive failures for a cooldown
+    _CB_THRESHOLD = 3        # failures before tripping
+    _CB_COOLDOWN  = 300      # seconds to skip the tripped provider
+
     def __init__(self):
         self.gemini_key = self._clean_setting(settings.gemini_api_key)
         self.gemini_model = self._clean_setting(settings.gemini_model)
 
         self.openrouter_key = self._clean_setting(settings.openrouter_api_key)
         self.openrouter_model = self._clean_setting(settings.openrouter_model)
+
+        # Circuit breaker state
+        self._gemini_failures: int = 0
+        self._openrouter_failures: int = 0
+        self._gemini_tripped_at: float = 0.0
+        self._openrouter_tripped_at: float = 0.0
 
     @staticmethod
     def _clean_setting(value: str | None) -> str:
@@ -86,22 +96,72 @@ class LLMFailoverController:
         """
         return status_code in (401, 403, 404, 429) or status_code >= 500
 
+    def _is_gemini_open(self) -> bool:
+        """True if Gemini circuit breaker is closed (allow calls)."""
+        import time
+        if self._gemini_failures < self._CB_THRESHOLD:
+            return True
+        if time.time() - self._gemini_tripped_at > self._CB_COOLDOWN:
+            # Cooldown expired — reset and allow a probe
+            self._gemini_failures = 0
+            logger.info("Circuit breaker RESET for Gemini (cooldown expired)")
+            return True
+        return False
+
+    def _is_openrouter_open(self) -> bool:
+        """True if OpenRouter circuit breaker is closed (allow calls)."""
+        import time
+        if self._openrouter_failures < self._CB_THRESHOLD:
+            return True
+        if time.time() - self._openrouter_tripped_at > self._CB_COOLDOWN:
+            self._openrouter_failures = 0
+            logger.info("Circuit breaker RESET for OpenRouter (cooldown expired)")
+            return True
+        return False
+
+    def _record_gemini_fail(self):
+        import time
+        self._gemini_failures += 1
+        if self._gemini_failures >= self._CB_THRESHOLD:
+            self._gemini_tripped_at = time.time()
+            logger.warning("Circuit breaker TRIPPED for Gemini (%d consecutive failures) — skipping for %ds",
+                           self._gemini_failures, self._CB_COOLDOWN)
+
+    def _record_openrouter_fail(self):
+        import time
+        self._openrouter_failures += 1
+        if self._openrouter_failures >= self._CB_THRESHOLD:
+            self._openrouter_tripped_at = time.time()
+            logger.warning("Circuit breaker TRIPPED for OpenRouter (%d consecutive failures) — skipping for %ds",
+                           self._openrouter_failures, self._CB_COOLDOWN)
+
     async def generate(self, prompt: str) -> Dict[str, Any]:
         """
-        Executes the failover logic:
-        Attempt 1: Gemini
-        Attempt 2 (if 429/5xx): OpenRouter
-        Attempt 3 (if 429/5xx): Gemini
+        Executes the failover logic with circuit breaker:
+        1. Try Gemini (if circuit breaker allows)
+        2. Try OpenRouter (if circuit breaker allows)
+        3. Retry Gemini one more time (if circuit breaker allows)
         """
         last_codes = []
 
-        gemini_enabled = self._is_configured(self.gemini_key) and self._is_configured(self.gemini_model)
-        openrouter_enabled = self._is_configured(self.openrouter_key) and self._is_configured(self.openrouter_model)
+        gemini_enabled = (self._is_configured(self.gemini_key)
+                          and self._is_configured(self.gemini_model)
+                          and self._is_gemini_open())
+        openrouter_enabled = (self._is_configured(self.openrouter_key)
+                              and self._is_configured(self.openrouter_model)
+                              and self._is_openrouter_open())
 
         if not gemini_enabled and not openrouter_enabled:
+            # Check if they're configured but circuit-breaker tripped
+            g_configured = self._is_configured(self.gemini_key) and self._is_configured(self.gemini_model)
+            o_configured = self._is_configured(self.openrouter_key) and self._is_configured(self.openrouter_model)
+            if g_configured or o_configured:
+                msg = "All LLM providers are temporarily unavailable (circuit breaker tripped). Will retry automatically."
+            else:
+                msg = "No LLM provider is configured. Set GEMINI_API_KEY or OPENROUTER_API_KEY."
             return {
                 "status": "error",
-                "message": "No LLM provider is configured. Set GEMINI_API_KEY or OPENROUTER_API_KEY.",
+                "message": msg,
                 "code_a": None,
                 "code_b": None,
             }
@@ -123,17 +183,21 @@ class LLMFailoverController:
 
                     if not self._should_retry(resp_a1.status_code):
                         resp_a1.raise_for_status()
+                        self._gemini_failures = 0  # Reset on success
                         logger.info("Request successful using Provider A (Gemini) on Attempt 1")
                         return {
                             "status": "success",
                             "text": self._extract_text_gemini(resp_a1.json()),
                             "provider": "Gemini"
                         }
+                    else:
+                        self._record_gemini_fail()
                 except httpx.HTTPError as e:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 0:
                         last_codes.append(status)
                     logger.warning("LLM attempt 1 Gemini failed status=%s", status)
+                    self._record_gemini_fail()
                     if not self._should_retry(status) and not openrouter_enabled:
                         code_a = last_codes[0] if len(last_codes) > 0 else None
                         return {
@@ -146,8 +210,6 @@ class LLMFailoverController:
                 last_codes.append(None)
 
             if openrouter_enabled:
-                await asyncio.sleep(2 ** attempt)
-            
                 # --- Attempt 2: Provider B (OpenRouter) ---
                 attempt = 2
                 try:
@@ -157,17 +219,21 @@ class LLMFailoverController:
 
                     if not self._should_retry(resp_b.status_code):
                         resp_b.raise_for_status()
+                        self._openrouter_failures = 0  # Reset on success
                         logger.info("Request successful using Provider B (OpenRouter) on Attempt 2")
                         return {
                             "status": "success",
                             "text": self._extract_text_openrouter(resp_b.json()),
                             "provider": "OpenRouter"
                         }
+                    else:
+                        self._record_openrouter_fail()
                 except httpx.HTTPError as e:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 1:
                         last_codes.append(status)
                     logger.warning("LLM attempt 2 OpenRouter failed status=%s", status)
+                    self._record_openrouter_fail()
                     if not self._should_retry(status):
                         code_a = last_codes[0] if len(last_codes) > 0 else None
                         code_b = last_codes[1] if len(last_codes) > 1 else None
@@ -181,9 +247,7 @@ class LLMFailoverController:
                 if len(last_codes) == 1:
                     last_codes.append(None)
 
-            if gemini_enabled:
-                await asyncio.sleep(2 ** attempt)
-
+            if gemini_enabled and self._is_gemini_open():
                 # --- Attempt 3: Provider A (Gemini) Once More ---
                 attempt = 3
                 try:
@@ -193,17 +257,21 @@ class LLMFailoverController:
 
                     if not self._should_retry(resp_a2.status_code):
                         resp_a2.raise_for_status()
+                        self._gemini_failures = 0  # Reset on success
                         logger.info("Request successful using Provider A (Gemini) on Attempt 3")
                         return {
                             "status": "success",
                             "text": self._extract_text_gemini(resp_a2.json()),
                             "provider": "Gemini"
                         }
+                    else:
+                        self._record_gemini_fail()
                 except httpx.HTTPError as e:
                     status = getattr(e.response, "status_code", 503) if hasattr(e, "response") else 503
                     if len(last_codes) == 2:
                         last_codes.append(status)
                     logger.warning("LLM attempt 3 Gemini failed status=%s", status)
+                    self._record_gemini_fail()
                 
             # If all 3 attempts fail or we get 429/5xx on the 3rd attempt, return standardized JSON error
             code_a = last_codes[0] if len(last_codes) > 0 else None
@@ -226,3 +294,4 @@ class LLMFailoverController:
 
 # Instantiable Controller
 llm_controller = LLMFailoverController()
+

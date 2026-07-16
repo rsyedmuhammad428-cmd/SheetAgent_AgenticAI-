@@ -1103,6 +1103,7 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
         if not numeric_cols:
             # Fall back to including ID-like columns rather than showing nothing
             for h in headers:
+                if h == name_key: continue
                 for row in real_data[:5]:
                     val = row.get(h)
                     if isinstance(val, (int, float)):
@@ -1110,6 +1111,18 @@ def _build_analytics_dashboard(wb: Workbook, real_data: list, headers: list, the
                         break
         if not numeric_cols:
             return # No numeric columns to summarize
+        
+        # Sort numeric columns by importance so we pick "Total", "Profit", etc. over arbitrary columns
+        importance_keywords = ["total", "profit", "revenue", "sales", "margin", "cost", "salary", "budget", "fee", "amount", "price", "score", "mark", "rating", "grade", "gpa", "qty", "quantity", "count", "net", "gross"]
+        
+        def get_importance(h):
+            h_l = str(h).lower()
+            for i, kw in enumerate(importance_keywords):
+                if kw in h_l:
+                    return i
+            return 999
+            
+        numeric_cols.sort(key=get_importance)
         is_general = True
     else:
         is_general = False

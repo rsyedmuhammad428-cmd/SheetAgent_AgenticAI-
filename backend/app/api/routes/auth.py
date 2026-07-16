@@ -68,7 +68,14 @@ def _get_base_and_engine():
                             default=lambda: datetime.now(timezone.utc))
 
     _, _, db_url = _cfg()
-    engine  = create_async_engine(db_url, echo=False)
+    kwargs = {"echo": False}
+    if "postgresql" in db_url:
+        kwargs.update({
+            "pool_pre_ping": True,
+            "pool_recycle": 300,
+            "pool_timeout": 30,
+        })
+    engine  = create_async_engine(db_url, **kwargs)
     session = async_sessionmaker(engine, expire_on_commit=False)
     return Base, User, engine, session
 

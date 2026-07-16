@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 class Settings(BaseSettings):
     gemini_api_key: str = "missing"
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
     
     openrouter_api_key: str = "missing"
     openrouter_model: str = "meta-llama/llama-3.1-8b-instruct"
